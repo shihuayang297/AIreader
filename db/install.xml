@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<XMLDB PATH="mod/aireader2/db" VERSION="20250101" COMMENT="AI Reader 2 Activity Tables"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="../../../lib/xmldb/xmldb.xsd"
+>
+  <TABLES>
+    
+    <TABLE NAME="aireader2" COMMENT="Stores the AI Reader activity settings">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="course" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false"/>
+        <FIELD NAME="name" TYPE="char" LENGTH="255" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="intro" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="Task instructions"/>
+        <FIELD NAME="introformat" TYPE="int" LENGTH="4" NOTNULL="true" DEFAULT="0" SEQUENCE="false"/>
+        <FIELD NAME="resources_json" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="Reading materials"/>
+        <FIELD NAME="rubric_json" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="Grading criteria"/>
+        
+        <FIELD NAME="structure" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="Parsed PDF structure (JSON format)"/>
+        <FIELD NAME="enable_ai_check" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="1" SEQUENCE="false"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="course" UNIQUE="false" FIELDS="course"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="aireader2_submissions" COMMENT="Master table for student submissions state">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="aireader2id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Instance ID"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        
+        <FIELD NAME="content" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="Current HTML content"/>
+        
+        <FIELD NAME="word_count" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" COMMENT="Current word count"/>
+        <FIELD NAME="writing_time" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" COMMENT="Total active writing time in seconds"/>
+        <FIELD NAME="revision_count" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" COMMENT="Number of saves/revisions"/>
+        
+        <FIELD NAME="status" TYPE="char" LENGTH="20" NOTNULL="true" DEFAULT="draft" SEQUENCE="false" COMMENT="draft, submitted, graded"/>
+        <FIELD NAME="grade" TYPE="number" LENGTH="10" DECIMALS="5" NOTNULL="false" SEQUENCE="false"/>
+        
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="timemodified" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_aireader2" TYPE="foreign" FIELDS="aireader2id" REFTABLE="aireader2" REFFIELDS="id"/>
+        <KEY NAME="unique_submission" TYPE="unique" FIELDS="aireader2id, userid"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="userid" UNIQUE="false" FIELDS="userid"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="aireader2_steps" COMMENT="History versions for process analysis">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="submissionid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Link to submissions table"/>
+        <FIELD NAME="content" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="Snapshot content"/>
+        <FIELD NAME="action" TYPE="char" LENGTH="50" NOTNULL="true" DEFAULT="auto_save" COMMENT="manual_save, auto_save, submit"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_submission" TYPE="foreign" FIELDS="submissionid" REFTABLE="aireader2_submissions" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="submission_lookup" UNIQUE="false" FIELDS="submissionid"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="aireader2_logs" COMMENT="Granular behavioral logs">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="submissionid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="event_type" TYPE="char" LENGTH="50" NOTNULL="true" SEQUENCE="false" COMMENT="paste, focus_lost, ai_chat, etc."/>
+        <FIELD NAME="event_data" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="JSON payload for details"/>
+        <FIELD NAME="client_timestamp" TYPE="int" LENGTH="15" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_sub_log" TYPE="foreign" FIELDS="submissionid" REFTABLE="aireader2_submissions" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="analysis_lookup" UNIQUE="false" FIELDS="submissionid, event_type"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="aireader2_chat_log" COMMENT="Logs for multi-agent conversations, storing separate rows for user and AI">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="User who engaged in the chat"/>
+        <FIELD NAME="aireader2id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Link to aireader2 instance"/>
+        
+        <FIELD NAME="conversation_id" TYPE="char" LENGTH="36" NOTNULL="false" SEQUENCE="false" COMMENT="UUID to group a single Q&amp;A pair or thread"/>
+        <FIELD NAME="parent_id" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="ID of the message this one is replying to (0 if new topic)"/>
+        <FIELD NAME="sender_type" TYPE="char" LENGTH="20" NOTNULL="true" DEFAULT="user" SEQUENCE="false" COMMENT="'user' or 'ai'"/>
+        <FIELD NAME="agent_name" TYPE="char" LENGTH="100" NOTNULL="false" SEQUENCE="false" COMMENT="Name of the AI agent (e.g. Navigator), optional for user messages"/>
+        <FIELD NAME="content" TYPE="text" NOTNULL="true" SEQUENCE="false" COMMENT="The actual message content"/>
+        
+        <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Timestamp of when this specific message was created"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_user" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+        <KEY NAME="fk_aireader2" TYPE="foreign" FIELDS="aireader2id" REFTABLE="aireader2" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="lookup_user_task" UNIQUE="false" FIELDS="userid, aireader2id"/>
+        <INDEX NAME="lookup_conversation" UNIQUE="false" FIELDS="conversation_id"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="aireader2_annotations" COMMENT="Stores PDF annotations like highlights and notes">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="aireader2id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Instance ID"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="page_num" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+        <FIELD NAME="type" TYPE="char" LENGTH="20" NOTNULL="true" DEFAULT="highlight" SEQUENCE="false" COMMENT="highlight or ink"/>
+        <FIELD NAME="quote" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="Selected text content"/>
+        <FIELD NAME="color" TYPE="char" LENGTH="64" NOTNULL="false" DEFAULT="#ffeb3b" SEQUENCE="false" COMMENT="支持 rgba() 等长格式"/>
+        <FIELD NAME="position_data" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="JSON coordinates"/>
+        <FIELD NAME="created_at" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="fk_ann_aireader2" TYPE="foreign" FIELDS="aireader2id" REFTABLE="aireader2" REFFIELDS="id"/>
+        <KEY NAME="fk_ann_user" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="lookup_user_ann" UNIQUE="false" FIELDS="aireader2id, userid"/>
+      </INDEXES>
+    </TABLE>
+
+    <TABLE NAME="aireader2_progress" COMMENT="Tracks detailed user learning behaviors and aggregated progress">
+      <FIELDS>
+        <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+        <FIELD NAME="aireader2id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Instance ID"/>
+        <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="User ID"/>
+        
+        <FIELD NAME="total_read_seconds" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="Total time spent reading (seconds)"/>
+        <FIELD NAME="last_page" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="1" SEQUENCE="false" COMMENT="Last accessed page number"/>
+        
+        <FIELD NAME="page_dwell_time" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="JSON: time spent on each page"/>
+        
+        <FIELD NAME="interaction_count" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="Total count of highlights and AI chats"/>
+        
+        <FIELD NAME="focus_loss_count" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="Number of times user switched tabs"/>
+        
+        <FIELD NAME="last_access" TYPE="int" LENGTH="10" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="Timestamp"/>
+        <FIELD NAME="completion_status" TYPE="int" LENGTH="1" NOTNULL="true" DEFAULT="0" SEQUENCE="false" COMMENT="0:Ongoing, 1:Completed"/>
+      </FIELDS>
+      <KEYS>
+        <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+        <KEY NAME="uq_user_progress" TYPE="unique" FIELDS="aireader2id, userid"/>
+      </KEYS>
+      <INDEXES>
+        <INDEX NAME="idx_aireader2_user" UNIQUE="false" FIELDS="aireader2id, userid"/>
+      </INDEXES>
+    </TABLE>
+
+  </TABLES>
+</XMLDB>

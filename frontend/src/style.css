@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* === 1. 核心字体设置 === */
+body, html {
+    @apply bg-[#F9FAFB] text-gray-800 font-sans antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+}
+
+/* === 2. 核武器：强制 Vue 应用全屏覆盖 === */
+/* 这是解决“铺不开”的关键！ */
+#app {
+    position: fixed;      /* 固定定位，脱离文档流 */
+    top: 0;
+    left: 0;
+    width: 100vw;         /* 宽度占满视口 100% */
+    height: 100vh;        /* 高度占满视口 100% */
+    z-index: 99999;       /* 层级最高，盖住 Moodle 导航栏 */
+    background-color: #F9FAFB; /* 必须有背景色，否则是透明的 */
+    overflow: hidden;     /* 内部滚动交给 Vue 处理 */
+}
+
+/* === 3. Moodle Hack: 隐藏原有元素 (双重保险) === */
+body.path-mod-aireader #page-wrapper,
+body.path-mod-aireader #page,
+body.path-mod-aireader #page-content,
+body.path-mod-aireader #page-header,
+body.path-mod-aireader #page-footer {
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+}
+
+/* 隐藏 Moodle 的抽屉按钮等杂项 */
+body.path-mod-aireader .drawer-toggler,
+body.path-mod-aireader .secondary-navigation,
+body.path-mod-aireader .fixed-top.navbar {
+    display: none !important;
+}
+
+/* === 4. Tiptap 编辑器美化 === */
+.ProseMirror {
+    @apply outline-none prose prose-slate max-w-none;
+    font-size: 1.05rem;
+    line-height: 1.8;
+    color: #374151;
+    min-height: 60vh;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+    color: #9ca3af;
+    content: attr(data-placeholder);
+    float: left;
+    height: 0;
+    pointer-events: none;
+}
+
+/* 选中文字颜色 */
+.ProseMirror ::selection {
+    background-color: #dbeafe;
+    color: inherit;
+}
+
+/* === 5. 滚动条美化 === */
+.custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+    transition: scrollbar-color 0.3s;
+}
+.custom-scrollbar:hover {
+    scrollbar-color: #d1d5db transparent;
+}
+.custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background-color: transparent;
+    border-radius: 10px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+.custom-scrollbar:hover::-webkit-scrollbar-thumb {
+    background-color: #d1d5db;
+}

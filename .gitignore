@@ -1,0 +1,38 @@
+# Dependencies
+frontend/node_modules/
+
+# Build output (others can run npm run build)
+frontend/dist/
+
+# IDE / Editor
+.cursor/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs & temp
+*.log
+log.txt
+*.tmp
+*.temp
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.so
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env / secrets (if any)
+.env
+.env.local
+*.pem
