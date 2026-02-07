@@ -28,7 +28,10 @@ const totalReadSeconds = ref(0)
 const currentPage = ref(1)
 let sessionFocusLost = 0
 
-const currentSessionId = ref(1) 
+const currentSessionId = ref(1)
+const currentSessionUid = ref('')
+const chatApiUrl = ref('')
+const ajaxUrl = ref('')
 
 const activeTool = ref('cursor')
 
@@ -169,7 +172,8 @@ const handleSectionSwitch = async (sectionTitle) => {
         // 🔥🔥🔥 关键：带上 rule_id，让后端知道这是一条任务记录 🔥🔥🔥
         formData.append('rule_id', matchedRule.id);
         
-        await fetch(`chat_api.php?action=save_log`, { method: 'POST', body: formData });
+        const chatUrl = chatApiUrl.value || 'chat_api.php'
+        await fetch(`${chatUrl}?action=save_log`, { method: 'POST', body: formData });
         
         // 既然触发了，无论用户是否立刻回答，先加入待办池 (直到用户点击“开始回答”)
         if (!pendingChallenges.value.includes(matchedRule.id)) {
@@ -248,7 +252,8 @@ const handleCreateAnnotation = async (newAnn) => {
         formData.append('note', newAnn.note || '');
         formData.append('session_id', currentSessionId.value);
         
-        const res = await fetch(`ajax.php?action=create_annotation&id=${moduleId.value}`, {
+        const base = ajaxUrl.value || 'ajax.php'
+        const res = await fetch(`${base}?action=create_annotation&id=${moduleId.value}`, {
             method: 'POST',
             body: formData
         });
@@ -271,7 +276,7 @@ const handleDeleteAnnotation = async (id) => {
     annotations.value = annotations.value.filter(a => a.id !== id && a.tempId !== id)
     
     try {
-        await fetch(`ajax.php?action=delete_annotation&id=${moduleId.value}&ann_id=${id}`, { method: 'POST' });
+        await fetch(`${ajaxUrl.value || 'ajax.php'}?action=delete_annotation&id=${moduleId.value}&ann_id=${id}`, { method: 'POST' });
     } catch (e) {
         console.error("删除失败:", e);
     }
@@ -285,7 +290,7 @@ const handleUpdateAnnotation = async ({ id, note }) => {
         const formData = new FormData();
         formData.append('ann_id', id);
         formData.append('note', note);
-        await fetch(`ajax.php?action=update_annotation_note&id=${moduleId.value}`, {
+        await fetch(`${ajaxUrl.value || 'ajax.php'}?action=update_annotation_note&id=${moduleId.value}`, {
             method: 'POST',
             body: formData
         });
@@ -329,7 +334,7 @@ const startHeartbeat = () => {
         const intervalSec = 10 
         const lostCountToSend = sessionFocusLost
         sessionFocusLost = 0 
-        fetch(`ajax.php?action=update_progress&id=${moduleId.value}&seconds=${intervalSec}&page=${currentPage.value}&focus_lost=${lostCountToSend}`)
+        fetch(`${ajaxUrl.value || 'ajax.php'}?action=update_progress&id=${moduleId.value}&seconds=${intervalSec}&page=${currentPage.value}&focus_lost=${lostCountToSend}`)
             .then(() => { })
             .catch(err => console.error("💔 心跳失败", err))
     }, 10000) 
@@ -348,6 +353,8 @@ onMounted(async () => {
 
   // 获取 Moodle 后端传递的状态
   if (appEl && appEl.dataset) {
+    chatApiUrl.value = appEl.dataset.chatApiUrl || ''
+    ajaxUrl.value = appEl.dataset.ajaxUrl || ''
     // 角色识别与门户逻辑
     isTeacher.value = appEl.dataset.isTeacher === '1'
     const action = urlParams.get('action')
@@ -370,7 +377,8 @@ onMounted(async () => {
   // 高亮回显：先拉取 get_task_info（含 annotations）再显示阅读器，与 aireader 一致，避免刷新后高亮不显示
   if (moduleId.value) {
       try {
-          const res = await fetch(`ajax.php?action=get_task_info&id=${moduleId.value}&_t=${Date.now()}`)
+          const base = ajaxUrl.value || 'ajax.php'
+          const res = await fetch(`${base}?action=get_task_info&id=${moduleId.value}&_t=${Date.now()}`)
           const json = await res.json()
           if (json.status === 'success' && json.data) {
               taskInfo.value.title = json.data.title || taskInfo.value.title || '无标题'
@@ -540,7 +548,8 @@ onUnmounted(() => {
                 :current-user="currentUser" 
                 :task="taskInfo"
                 :pending-tasks="pendingChallenges"
-                :active-challenge-id="activeChallengeId" 
+                :active-challenge-id="activeChallengeId"
+                :chat-api-url="chatApiUrl"
                 @card-action="handleCardAction" 
             />
         </div>

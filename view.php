@@ -191,7 +191,16 @@ $draft_attr = htmlspecialchars($draft_content ?? '', ENT_QUOTES, 'UTF-8');
 $pdf_list_json = htmlspecialchars(json_encode($pdf_files), ENT_QUOTES, 'UTF-8');
 
 // 🔥 核心增强：向 Vue 传递 isTeacher 标志，确保 Vue 内部渲染逻辑同步
+$chat_api_url = $CFG->wwwroot . '/mod/aireader2/chat_api.php';
+$ajax_url = $CFG->wwwroot . '/mod/aireader2/ajax.php';
+// 调试：读者页输出时写一条日志，便于确认是否走了 view.php 以及下发的 URL
+$debug_log_path = __DIR__ . '/.cursor/debug.log';
+$debug_dir = dirname($debug_log_path);
+if (!is_dir($debug_dir)) { @mkdir($debug_dir, 0755, true); }
+@file_put_contents($debug_log_path, json_encode(['location' => 'view.php', 'message' => 'reader output', 'data' => ['chat_api_url' => $chat_api_url]], JSON_UNESCAPED_UNICODE) . "\n", FILE_APPEND | LOCK_EX);
 echo '<div id="app" 
+        data-chat-api-url="'.s($chat_api_url).'"
+        data-ajax-url="'.s($ajax_url).'"
         data-is-teacher="'.($is_teacher ? '1' : '0').'"
         data-title="'.s($aireader->name).'" 
         data-intro="'.s($aireader->intro).'" 

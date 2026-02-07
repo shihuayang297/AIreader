@@ -72,7 +72,11 @@ class SparkLLM(LLM):
         return SPARK_URL + '?' + urlencode(v)
 
     def on_error(self, ws, error):
-        print("Spark Error:", error)
+        err_msg = str(error) if error else "未知错误"
+        print("Spark Error:", err_msg)
+        # 确保调用方拿到错误信息，避免前端只显示 "..."
+        if not self.response_content:
+            self.response_content = f"（星火连接异常）{err_msg}"
 
     def on_close(self, ws, one, two):
         pass
@@ -85,19 +89,28 @@ class SparkLLM(LLM):
         ws.send(data)
 
     def on_message(self, ws, message):
-        data = json.loads(message)
-        code = data['header']['code']
+        try:
+            data = json.loads(message)
+        except Exception as e:
+            self.response_content = f"（星火返回解析异常）{e}"
+            return
+        code = data.get("header", {}).get("code", -1)
         if code != 0:
+            msg = data.get("header", {}).get("message", "未知错误")
             print(f'请求错误: {code}, {data}')
-            self.response_content = f"Error Code {code}: {data['header']['message']}"
+            self.response_content = f"（星火接口报错 {code}）{msg}"
             ws.close()
-        else:
+            return
+        try:
             choices = data["payload"]["choices"]
             status = choices["status"]
             content = choices["text"][0]["content"]
             self.response_content += content
             if status == 2:
                 ws.close()
+        except (KeyError, IndexError, TypeError) as e:
+            self.response_content = f"（星火返回格式异常）{e}"
+            ws.close()
 
     def gen_params(self, prompt):
         return {

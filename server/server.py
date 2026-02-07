@@ -143,9 +143,16 @@ async def chat_endpoint(req: AgentRequest):
         # --- D. 调用星火模型 ---
         print(f"🤖 Activating Agent: {target_agent} (Prompt: {prompt_key})")
         
-        # 实例化新的 LLM 对象 (从 spark_client 导入)
-        current_llm = SparkLLM() 
+        current_llm = SparkLLM()
         response_text = current_llm.invoke(final_input)
+
+        # 星火未返回内容时给出明确提示，便于排查连接/配置问题
+        if response_text is None or (isinstance(response_text, str) and not response_text.strip()):
+            response_text = (
+                "（星火大模型未返回内容）请检查：1) 本机 Python 服务是否已启动（端口 8000）；"
+                "2) 星火 API 配置（config.py 中 APPID/Key/Secret）与网络是否正常。"
+            )
+            print("⚠️ Spark returned empty, using fallback message.")
 
         # --- E. 返回结果 ---
         return [{

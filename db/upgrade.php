@@ -146,5 +146,12 @@ function xmldb_aireader2_upgrade($oldversion) {
         upgrade_mod_savepoint(true, 2026012200, 'aireader2');
     }
 
+    // =========================================================================
+    // 7. 版本号与 version.php 对齐，避免“不能降级”错误（无表结构变更）
+    // =========================================================================
+    if ($oldversion < 2026020600) {
+        upgrade_mod_savepoint(true, 2026020600, 'aireader2');
+    }
+
     return true;
 }

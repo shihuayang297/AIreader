@@ -11,11 +11,30 @@ try {
 }
 
 global $DB, $USER, $CFG;
+// 不使用 xmldb_table.php，避免服务器上 $CFG->libdir 配置为占位符（如 [dirroot]/lib）时 require 失败
 header('Content-Type: application/json; charset=utf-8');
 error_reporting(E_ALL & ~E_NOTICE & ~E_WARNING);
 ini_set('display_errors', 0);
 
 $action = optional_param('action', '', PARAM_TEXT);
+
+// #region agent log — 同时写 dataroot 与 error_log，便于在无文件权限时仍能在 PHP 错误日志中看到
+$debug_log_path = $CFG->dataroot . '/aireader2_chat_debug.log';
+$debug_log = function ($msg, $data = [], $hypothesisId = '') use ($debug_log_path) {
+    $line = json_encode([
+        'location' => 'chat_api.php',
+        'message' => $msg,
+        'data' => $data,
+        'timestamp' => time() * 1000,
+        'sessionId' => 'debug-session',
+        'hypothesisId' => $hypothesisId
+    ], JSON_UNESCAPED_UNICODE);
+    @file_put_contents($debug_log_path, $line . "\n", FILE_APPEND | LOCK_EX);
+    error_log('[aireader2_chat] ' . $msg . ' ' . json_encode($data, JSON_UNESCAPED_UNICODE));
+};
+// 任意请求进入即写一条，用于确认请求是否到达本文件
+$debug_log('chat_api hit', ['method' => $_SERVER['REQUEST_METHOD'] ?? '', 'action' => $action], 'X');
+// #endregion
 
 // ============================================================
 // 🚀 接口 1: 历史记录回显
@@ -34,50 +53,58 @@ if ($action === 'load_history') {
         'timecreated ASC'
     );
 
+    // #region agent log
+    $first_keys = !empty($logs) ? array_keys((array)reset($logs)) : [];
+    $debug_log('load_history: DB rows', ['count' => count($logs), 'first_row_keys' => $first_keys], 'B');
+    // #endregion
+
     $history = [];
     foreach ($logs as $log) {
-        // --- 1. 处理用户的提问 ---
-        if (!empty($log->user_message)) {
-            // 过滤掉系统自动触发的指令
-            if (strpos($log->user_message, '[系统:') === false) {
+        // 判断是否为用户消息：优先 role，其次 sender_type，再 user_message
+        $is_user = (isset($log->role) && $log->role === 'user')
+            || (isset($log->sender_type) && $log->sender_type === 'user');
+        $user_content = $is_user ? (isset($log->content) ? $log->content : (isset($log->user_message) ? $log->user_message : '')) : '';
+        if ($user_content !== '' && (string)$user_content !== '') {
+            if (strpos((string)$user_content, '[系统:') === false) {
                 $history[] = [
                     'id' => 'u_' . $log->id,
                     'role' => 'user',
-                    'content' => $log->user_message,
+                    'content' => $user_content,
                     'time' => date('H:i', $log->timecreated)
                 ];
             }
         }
 
-        // --- 2. 处理 AI 的回复 ---
-        if (!empty($log->ai_response)) {
-            // 容错处理
-            $agentId = $log->agent_name;
-            if (empty($agentId) || $agentId === 'system') {
+        // 判断是否为 AI 消息：优先 role，其次 sender_type，再 ai_response
+        $is_ai = (isset($log->role) && $log->role === 'ai')
+            || (isset($log->sender_type) && $log->sender_type === 'ai');
+        $ai_content = $is_ai ? (isset($log->content) ? $log->content : (isset($log->ai_response) ? $log->ai_response : '')) : '';
+        if ($ai_content !== '' && (string)$ai_content !== '') {
+            $agentId = isset($log->agent_name) ? $log->agent_name : '';
+            if ($agentId === '' || $agentId === 'system') {
                 $agentId = 'navigator';
             }
-            
-            // 如果 content 是 JSON 格式的卡片数据，直接放入 content
-            $content = $log->ai_response;
-            // 兼容旧字段 agent_id
-            if (empty($agentId) && !empty($log->agent_id)) {
+            if ($agentId === '' && !empty($log->agent_id)) {
                 $agentId = $log->agent_id;
             }
-            // 兼容旧字段 content
-            if (empty($content) && !empty($log->content)) {
-                $content = $log->content;
+            if ($agentId === '') {
+                $agentId = 'navigator';
             }
 
             $history[] = [
                 'id' => 'ai_' . $log->id,
                 'role' => 'ai',
-                'agentId' => $agentId, 
-                'content' => $content,
+                'agentId' => $agentId,
+                'content' => $ai_content,
                 'time' => date('H:i', $log->timecreated),
-                'ruleId' => 0 // 注意：表没有 rule_id 字段 
+                'ruleId' => 0
             ];
         }
     }
+
+    // #region agent log
+    $debug_log('load_history: history built', ['history_count' => count($history)], 'B');
+    // #endregion
 
     echo json_encode(['status' => 'success', 'data' => $history]);
     die; 
@@ -140,21 +167,69 @@ if ($action === 'save_log') {
 
 $AI_SERVICE_URL = 'http://127.0.0.1:8000/chat';
 
+$instance_id = 0;
+$ts = 0;
+$user_content = '';
+$chat_log_table = 'aireader2_chat_log';
+$has_role = $DB->get_manager()->table_exists($chat_log_table) && $DB->get_manager()->field_exists($chat_log_table, 'role');
+$has_pair_id = $DB->get_manager()->table_exists($chat_log_table) && $DB->get_manager()->field_exists($chat_log_table, 'pair_id');
+$has_content = $DB->get_manager()->table_exists($chat_log_table) && $DB->get_manager()->field_exists($chat_log_table, 'content');
+$has_sender_type = $DB->get_manager()->table_exists($chat_log_table) && $DB->get_manager()->field_exists($chat_log_table, 'sender_type');
+$has_user_message = $DB->get_manager()->table_exists($chat_log_table) && $DB->get_manager()->field_exists($chat_log_table, 'user_message');
+$saved_pair_id = null;
+$saved_conv_id = null;
+
 try {
-    $message = optional_param('message', '', PARAM_RAW); 
-    $trigger_event = optional_param('trigger_event', '', PARAM_ALPHAEXT); 
-    
+    $message = optional_param('message', '', PARAM_RAW);
+    $trigger_event = optional_param('trigger_event', '', PARAM_ALPHAEXT);
+    $cmid = optional_param('cmid', 0, PARAM_INT);
+
+    // #region agent log — 任意 POST 进入就记一笔，便于确认请求是否到达
+    $debug_log('chat POST entry', ['action' => $action, 'message_len' => strlen($message), 'cmid' => $cmid], 'C');
+    // #endregion
+
     if (empty($message) && empty($trigger_event)) {
         die(json_encode([['role'=>'navigator', 'reply'=>'收到空请求，请重新输入。']]));
     }
-
-    $cmid = optional_param('cmid', 0, PARAM_INT); 
     if (!$cmid) {
         die(json_encode([['role'=>'navigator', 'reply'=>'系统错误：缺少任务ID (cmid)。']]));
     }
 
     $cm = get_coursemodule_from_id('aireader2', $cmid, 0, false, MUST_EXIST);
-    $instance_id = $cm->instance; 
+    $instance_id = $cm->instance;
+    $ts = time();
+    $user_content = !empty($trigger_event) ? "[系统事件:$trigger_event] $message" : $message;
+
+    $debug_log('chat table schema', [
+        'has_role' => $has_role, 'has_pair_id' => $has_pair_id, 'has_content' => $has_content,
+        'has_sender_type' => $has_sender_type, 'has_user_message' => $has_user_message
+    ], 'A');
+
+    // ——— 先写入用户消息，保证至少用户侧能存库；AI 行在拿到回复后（或 catch 里占位）再插 ———
+    if ($DB->get_manager()->table_exists('aireader2_chat_log')) {
+        if ($has_role && $has_content && $has_pair_id) {
+            $saved_pair_id = (int) $DB->get_field_sql('SELECT COALESCE(MAX(pair_id),0) + 1 FROM {aireader2_chat_log}');
+            $user_log = (object)[
+                'userid' => $USER->id, 'aireader2id' => $instance_id, 'agent_name' => '',
+                'timecreated' => $ts, 'role' => 'user', 'content' => $user_content, 'pair_id' => $saved_pair_id,
+            ];
+            $DB->insert_record('aireader2_chat_log', $user_log);
+        } elseif ($has_sender_type && $has_content) {
+            $saved_conv_id = $DB->get_manager()->field_exists($chat_log_table, 'conversation_id') ? bin2hex(random_bytes(18)) : null;
+            $user_log = (object)[
+                'userid' => $USER->id, 'aireader2id' => $instance_id, 'agent_name' => '',
+                'timecreated' => $ts, 'sender_type' => 'user', 'content' => $user_content,
+            ];
+            if ($saved_conv_id !== null) {
+                $user_log->conversation_id = $saved_conv_id;
+            }
+            if ($DB->get_manager()->field_exists($chat_log_table, 'parent_id')) {
+                $user_log->parent_id = 0;
+            }
+            $DB->insert_record('aireader2_chat_log', $user_log);
+        }
+        // has_user_message 为单行结构，等拿到 AI 回复后在下文一起插
+    }
 
     // 读取本地知识库
     $current_page = optional_param('current_page', 1, PARAM_INT);
@@ -304,21 +379,71 @@ try {
 
     $ai_data = json_decode($response, true);
 
-    // 记录日志
+    // #region agent log
+    if (isset($debug_log)) {
+        $first = is_array($ai_data) && isset($ai_data[0]) ? $ai_data[0] : null;
+        $reply_raw = $first['reply'] ?? $first['content'] ?? '';
+        $debug_log('chat AI response', [
+            'is_array' => is_array($ai_data),
+            'count' => is_array($ai_data) ? count($ai_data) : 0,
+            'first_role' => $first ? ($first['role'] ?? '') : '',
+            'reply_len' => is_string($reply_raw) ? strlen($reply_raw) : 0,
+            'reply_preview' => is_string($reply_raw) ? substr($reply_raw, 0, 80) : ''
+        ], 'E');
+    }
+    // #endregion
+
+    // 若 Python 返回的 reply 为空或仅为 "..."，兜底为友好提示，避免前端只显示 "..."
+    if (is_array($ai_data)) {
+        foreach ($ai_data as &$reply_item) {
+            $r = isset($reply_item['reply']) ? $reply_item['reply'] : (isset($reply_item['content']) ? $reply_item['content'] : '');
+            if (!is_string($r) || trim($r) === '' || trim($r) === '...') {
+                $reply_item['reply'] = '（领航者暂时没想好怎么说，稍后再试哦～）';
+            } else {
+                $reply_item['reply'] = $r;
+            }
+        }
+        unset($reply_item);
+        // 统一为数字索引数组，避免前端解析为对象导致 dataIsArray:false
+        $ai_data = array_values($ai_data);
+    }
+
+    // 只插入 AI 行（用户行已在上面插入）；legacy 表插整行
     if (is_array($ai_data)) {
         foreach ($ai_data as $reply_item) {
             try {
                 if ($DB->get_manager()->table_exists('aireader2_chat_log')) {
-                    $log = new stdClass();
-                    $log->userid = $USER->id; 
-                    $log->aireader2id = $instance_id; 
-                    $log->agent_name = $reply_item['role']; 
-                    $log->user_message = !empty($trigger_event) ? "[系统事件:$trigger_event] $message" : $message; 
-                    $log->ai_response = $reply_item['reply']; 
-                    $log->timecreated = time();
-                    // 注意：aireader2_chat_log 表没有 rule_id 字段，已移除
-                    
-                    $DB->insert_record('aireader2_chat_log', $log);
+                    if ($has_role && $has_content && $has_pair_id && $saved_pair_id !== null) {
+                        $ai_log = (object)[
+                            'userid' => $USER->id, 'aireader2id' => $instance_id,
+                            'agent_name' => $reply_item['role'], 'timecreated' => $ts,
+                            'role' => 'ai', 'content' => $reply_item['reply'], 'pair_id' => $saved_pair_id,
+                        ];
+                        $id2 = $DB->insert_record('aireader2_chat_log', $ai_log);
+                        $debug_log('chat after insert AI (role+pair_id)', ['pair_id' => $saved_pair_id, 'ai_id' => $id2], 'A');
+                    } elseif ($has_sender_type && $has_content) {
+                        $ai_log = (object)[
+                            'userid' => $USER->id, 'aireader2id' => $instance_id,
+                            'agent_name' => $reply_item['role'], 'timecreated' => $ts,
+                            'sender_type' => 'ai', 'content' => $reply_item['reply'],
+                        ];
+                        if ($saved_conv_id !== null && $DB->get_manager()->field_exists($chat_log_table, 'conversation_id')) {
+                            $ai_log->conversation_id = $saved_conv_id;
+                        }
+                        if ($DB->get_manager()->field_exists($chat_log_table, 'parent_id')) {
+                            $ai_log->parent_id = 0;
+                        }
+                        $id2 = $DB->insert_record('aireader2_chat_log', $ai_log);
+                        $debug_log('chat after insert AI (sender_type+content)', ['ai_id' => $id2], 'A');
+                    } elseif ($has_user_message) {
+                        $log = (object)[
+                            'userid' => $USER->id, 'aireader2id' => $instance_id,
+                            'agent_name' => $reply_item['role'], 'timecreated' => $ts,
+                            'user_message' => $user_content, 'ai_response' => $reply_item['reply'],
+                        ];
+                        $inserted_id = $DB->insert_record('aireader2_chat_log', $log);
+                        $debug_log('chat after insert (legacy)', ['inserted_id' => $inserted_id], 'A');
+                    }
 
                     if ($reply_item['role'] === 'reviewer' && $current_rule_id > 0 && $DB->get_manager()->table_exists('aireader2_challenge_tracker')) {
                         $tracker = $DB->get_record('aireader2_challenge_tracker', ['userid'=>$USER->id, 'rule_id'=>$current_rule_id, 'aireader2id'=>$instance_id]);
@@ -329,14 +454,55 @@ try {
                         }
                     }
                 }
-            } catch (Exception $e) {}
+            } catch (Exception $e) {
+                // #region agent log
+                if (isset($debug_log)) {
+                    $debug_log('chat insert exception', ['message' => $e->getMessage(), 'code' => $e->getCode()], 'A');
+                }
+                // #endregion
+            }
         }
-        echo $response;
+        // 输出已做空 reply 兜底后的数据，确保前端收到数组且每条有 reply
+        echo json_encode(array_values($ai_data), JSON_UNESCAPED_UNICODE);
     } else {
         throw new Exception("AI 返回格式异常");
     }
 
 } catch (Exception $e) {
-    echo json_encode([[ 'role' => 'navigator', 'reply' => "（系统提示）" . $e->getMessage() ]]);
+    $debug_log('chat outer exception', ['message' => $e->getMessage()], 'C');
+    $fallback_reply = "（系统提示）" . $e->getMessage();
+    $ai_data_fallback = [['role' => 'navigator', 'reply' => $fallback_reply]];
+    if ($instance_id > 0 && $DB->get_manager()->table_exists('aireader2_chat_log')) {
+        try {
+            if ($has_role && $has_content && $has_pair_id && $saved_pair_id !== null) {
+                $ai_log = (object)[
+                    'userid' => $USER->id, 'aireader2id' => $instance_id, 'agent_name' => 'navigator',
+                    'timecreated' => $ts ?: time(), 'role' => 'ai', 'content' => $fallback_reply, 'pair_id' => $saved_pair_id,
+                ];
+                $DB->insert_record('aireader2_chat_log', $ai_log);
+            } elseif ($has_sender_type && $has_content) {
+                $ai_log = (object)[
+                    'userid' => $USER->id, 'aireader2id' => $instance_id, 'agent_name' => 'navigator',
+                    'timecreated' => $ts ?: time(), 'sender_type' => 'ai', 'content' => $fallback_reply,
+                ];
+                if ($saved_conv_id !== null && $DB->get_manager()->field_exists($chat_log_table, 'conversation_id')) {
+                    $ai_log->conversation_id = $saved_conv_id;
+                }
+                if ($DB->get_manager()->field_exists($chat_log_table, 'parent_id')) {
+                    $ai_log->parent_id = 0;
+                }
+                $DB->insert_record('aireader2_chat_log', $ai_log);
+            } elseif ($has_user_message) {
+                $log = (object)[
+                    'userid' => $USER->id, 'aireader2id' => $instance_id, 'agent_name' => 'navigator',
+                    'timecreated' => $ts ?: time(), 'user_message' => $user_content ?: '', 'ai_response' => $fallback_reply,
+                ];
+                $DB->insert_record('aireader2_chat_log', $log);
+            }
+        } catch (Exception $e2) {
+            $debug_log('chat insert fallback exception', ['message' => $e2->getMessage()], 'A');
+        }
+    }
+    echo json_encode($ai_data_fallback);
 }
 ?>

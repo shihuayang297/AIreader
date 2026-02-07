@@ -19,7 +19,8 @@ const props = defineProps({
   activeChallengeId: {
     type: Number,
     default: 0
-  }
+  },
+  chatApiUrl: { type: String, default: '' }
 })
 
 const emit = defineEmits(['card-action'])
@@ -62,10 +63,20 @@ const loadHistory = async () => {
     try {
         const urlParams = new URLSearchParams(window.location.search)
         const cmid = urlParams.get('id') || 0
-        
-        const res = await fetch(`chat_api.php?action=load_history&cmid=${cmid}`)
+
+        // #region agent log
+        fetch('http://localhost:7245/ingest/a2cd8cc6-3ab9-472d-a750-ad20d0da1930', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'RightSiderbar:loadHistory start', message: 'load history', data: { cmid }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'B' }) }).catch(() => {})
+        // #endregion
+
+        const apiBase = props.chatApiUrl || 'chat_api.php'
+        const res = await fetch(`${apiBase}?action=load_history&cmid=${cmid}`)
         if (res.ok) {
             const result = await res.json()
+
+            // #region agent log
+            fetch('http://localhost:7245/ingest/a2cd8cc6-3ab9-472d-a750-ad20d0da1930', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'RightSiderbar:loadHistory result', message: 'history loaded', data: { status: result.status, dataLen: Array.isArray(result.data) ? result.data.length : 0 }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'B' }) }).catch(() => {})
+            // #endregion
+
             if (result.status === 'success' && Array.isArray(result.data) && result.data.length > 0) {
                 // 遍历数据，尝试解析 JSON 内容 (针对 challenge_card)
                 chatHistory.value = result.data.map(msg => {
@@ -145,12 +156,26 @@ const handleSendMessage = async (text, forceAgentId = null) => {
 
     formData.append('chat_history', historyPayload)
 
-    const res = await fetch('chat_api.php', { method: 'POST', body: formData })
-    
+    // #region agent log
+    fetch('http://localhost:7245/ingest/a2cd8cc6-3ab9-472d-a750-ad20d0da1930', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'RightSiderbar:before fetch chat_api', message: 'send message', data: { cmid: urlParams.get('id') || 0, textLen: (text || '').length }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'D' }) }).catch(() => {})
+    // #endregion
+
+    const apiBase = props.chatApiUrl || 'chat_api.php'
+    console.log('[RightSiderbar] chat POST URL:', apiBase)
+    const res = await fetch(apiBase, { method: 'POST', body: formData })
+    const rawText = await res.text()
+    console.log('[RightSiderbar] chat POST response:', res.status, res.url)
     let data = null
-    if (res.ok) {
-        try { data = await res.json() } catch(e) {}
+    if (res.ok && rawText) {
+        try { data = JSON.parse(rawText) } catch (e) { console.warn('[RightSiderbar] chat response not JSON:', rawText.slice(0, 300)) }
     }
+    if (data && !Array.isArray(data)) {
+        console.warn('[RightSiderbar] chat response is object not array, raw (first 500):', rawText.slice(0, 500))
+    }
+
+    // #region agent log
+    fetch('http://localhost:7245/ingest/a2cd8cc6-3ab9-472d-a750-ad20d0da1930', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ location: 'RightSiderbar:after fetch chat_api', message: 'response', data: { resOk: res.ok, dataIsArray: Array.isArray(data), dataLen: Array.isArray(data) ? data.length : (data ? 1 : 0), rawPreview: rawText ? rawText.slice(0, 200) : '' }, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId: 'D' }) }).catch(() => {})
+    // #endregion
 
     // 兜底模拟逻辑
     if (!data || (Array.isArray(data) && data.length === 0) || data.status === 'error') {
@@ -178,12 +203,14 @@ const handleSendMessage = async (text, forceAgentId = null) => {
             finalRole = targetResponder
         }
 
+        let text = (reply.reply ?? reply.content ?? '').trim() || ''
+        if (text === '' || text === '...') text = '（暂无回复，请稍后再试）'
         setTimeout(() => { 
             chatHistory.value.push({ 
                 id: Date.now() + index, 
                 role: 'ai', 
                 agentId: finalRole, 
-                content: reply.reply || '...', 
+                content: text, 
                 time: getFullTime() 
             })
             scrollToBottom() 
