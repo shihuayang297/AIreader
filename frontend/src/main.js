@@ -33,12 +33,14 @@ if (adminEl) {
     }
 
     const apiUrl = adminEl.dataset.apiUrl
+    const backUrl = adminEl.dataset.backUrl || ''
 
     // 2. 挂载教师端应用，并通过 props 把数据传进去
     const app = createApp(AdminDashboard, {
         structure: structure,
         rules: rules,
-        apiUrl: apiUrl
+        apiUrl: apiUrl,
+        backUrl: backUrl
     })
     
     app.mount('#admin-app')

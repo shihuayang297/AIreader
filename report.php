@@ -89,9 +89,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $PAGE->set_url('/mod/aireader2/report.php', ['id' => $id]);
 $PAGE->set_title('导读配置中心');
 $PAGE->set_heading($course->fullname);
-$PAGE->set_pagelayout('incourse'); // 使用嵌入式布局，去掉太大的头部
+$PAGE->set_pagelayout('embedded'); // 全屏：与学情看板一致，隐藏 Moodle 顶栏/侧栏/页脚
 
 echo $OUTPUT->header();
+
+// 全屏样式：与学情看板一致
+echo '<style>
+body.pagelayout-embedded .block,
+body.pagelayout-embedded #block-region-side-pre,
+body.pagelayout-embedded #block-region-side-post,
+body.pagelayout-embedded nav { display: none !important; }
+body.pagelayout-embedded #page { margin: 0; padding: 0; max-width: none; }
+body.pagelayout-embedded #page-content { padding: 0; }
+.admin-config-fullscreen {
+  min-height: 100vh;
+  padding: 0;
+  font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #f5f7fa;
+}
+.admin-config-fullscreen #admin-app { min-height: 100vh; display: flex; flex-direction: column; }
+</style>';
 
 // 1. 准备初始数据
 // 获取目录结构 (如果为空则给个默认空数组)
@@ -102,21 +119,21 @@ $structure_json = $aireader->structure ? $aireader->structure : '[]';
 $rules = $DB->get_records('aireader2_trigger_rules', ['aireader2id' => $aireader->id]);
 $rules_json = json_encode(array_values($rules));
 
-// 2. 注入 Vue 容器
-// 我们使用一个新的 ID 'admin-app'，避免和学生端的混淆
-// 将 API URL 传给前端，方便 fetch 调用
-echo '
-<div id="admin-app"
+// 2. 注入 Vue 容器（全屏包裹，与学情看板一致）
+echo '<div class="admin-config-fullscreen">';
+$back_url = $CFG->wwwroot . '/mod/aireader2/view.php?id=' . $id;
+echo '<div id="admin-app"
     data-api-url="'.$CFG->wwwroot.'/mod/aireader2/report.php?id='.$id.'"
     data-structure="'.htmlspecialchars($structure_json, ENT_QUOTES, 'UTF-8').'"
     data-rules="'.htmlspecialchars($rules_json, ENT_QUOTES, 'UTF-8').'"
+    data-back-url="'.htmlspecialchars($back_url, ENT_QUOTES, 'UTF-8').'"
 >
-    <div style="text-align:center; padding: 50px;">
-        <i class="fa fa-spinner fa-spin" style="font-size:30px; color:#ccc;"></i>
-        <p>正在加载配置控制台...</p>
+    <div style="display:flex;align-items:center;justify-content:center;min-height:50vh;flex-direction:column;gap:12px;color:#64748b;">
+        <i class="fa fa-spinner fa-spin" style="font-size:32px; color:#1565c0;"></i>
+        <p style="font-size:15px;font-weight:500;">正在加载导读配置中心...</p>
     </div>
-</div>
-';
+</div>';
+echo '</div>';
 
 // 3. 加载前端资源
 $ver = time(); // 开发阶段防止缓存

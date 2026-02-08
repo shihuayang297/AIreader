@@ -4,8 +4,12 @@ require_once('../../config.php');
 $courseid = required_param('courseid', PARAM_INT);
 $id = optional_param('id', 0, PARAM_INT); // cmid，可选，用于学生明细关联的活动
 $tab = optional_param('tab', optional_param('view', 'overview', PARAM_ALPHA), PARAM_ALPHA); // overview | detail，兼容 view=detail
-$uid = optional_param('uid', 0, PARAM_INT); // 学生明细选中的学生 id
+// 注意：uid 延后读取，避免批量导出时请求带 uid[] 数组导致 clean() 报错
 $search = optional_param('search', '', PARAM_RAW);
+$export_batch = optional_param('export_batch', 0, PARAM_INT); // 批量导出
+$export_student_excel = optional_param('export_student_excel', 0, PARAM_INT); // 导出该生本周 Excel
+$export_student_txt = optional_param('export_student_txt', 0, PARAM_INT);   // 导出该生质性文本
+$detail_week = optional_param('detail_week', '', PARAM_RAW); // 筛选周次 如 20250201 或 all
 
 require_login($courseid);
 $context = context_course::instance($courseid);
@@ -31,6 +35,129 @@ if ($id && isset($aireader2_cms[$id])) {
     $cm = reset($aireader2_cms);
     $id = $cm->id;
     $aireader = $DB->get_record('aireader2', ['id' => $cm->instance], '*', MUST_EXIST);
+}
+
+// 当前活动总页数（用于进度 页/总）：从 structure JSON 解析
+$detail_total_pages = 0;
+if ($aireader && !empty($aireader->structure)) {
+    $struct = json_decode($aireader->structure, true);
+    if (is_array($struct)) {
+        foreach ($struct as $item) {
+            if (isset($item['page']) && (int)$item['page'] > $detail_total_pages) {
+                $detail_total_pages = (int)$item['page'];
+            }
+        }
+    }
+}
+
+// ========== 批量导出已选同学数据（CSV） ==========
+if ($export_batch && $aireader && $id) {
+    $uids = optional_param_array('uid', [], PARAM_INT);
+    $uids = array_filter(array_map('intval', $uids));
+    $instance_id = $aireader->id;
+    $course_context = context_course::instance($courseid);
+    $valid_uids = [];
+    if (!empty($uids)) {
+        $placeholders = implode(',', array_fill(0, count($uids), '?'));
+        $enrolled = $DB->get_records_sql("SELECT ra.userid FROM {role_assignments} ra JOIN {context} ctx ON ctx.id = ra.contextid WHERE ctx.id = ? AND ra.userid IN ($placeholders)", array_merge([$course_context->id], $uids));
+        foreach ($enrolled as $r) {
+            if (!has_capability('moodle/course:manageactivities', $context, $r->userid)) $valid_uids[] = $r->userid;
+        }
+    }
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="学情导出_' . preg_replace('/[^\p{L}\p{N}\-_]/u', '_', $aireader->name) . '_' . date('Ymd') . '.csv"');
+    echo "\xEF\xBB\xBF"; // UTF-8 BOM
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['学号', '姓名', '阅读时长(分钟)', '进度(页/总)', '交互轮数', '笔记总数']);
+    foreach ($valid_uids as $userid) {
+        $u = $DB->get_record('user', ['id' => $userid], 'id, username, firstname, lastname');
+        $read_sec = 0;
+        $last_page = 1;
+        if ($DB->get_manager()->table_exists('aireader2_progress')) {
+            $p = $DB->get_record('aireader2_progress', ['aireader2id' => $instance_id, 'userid' => $userid], 'total_read_seconds, last_page');
+            if ($p) { $read_sec = (int)$p->total_read_seconds; $last_page = (int)$p->last_page; }
+        }
+        $ann = $DB->count_records('aireader2_annotations', ['aireader2id' => $instance_id, 'userid' => $userid]);
+        $chat = $DB->count_records('aireader2_chat_log', ['aireader2id' => $instance_id, 'userid' => $userid]);
+        $total_p = $detail_total_pages > 0 ? $detail_total_pages : $last_page;
+        $progress_str = $detail_total_pages > 0 ? $last_page . '/' . $total_p : (string)$last_page;
+        fputcsv($out, [$u ? $u->username : $userid, $u ? fullname($u) : '', (int)floor($read_sec / 60), $progress_str, $chat, $ann]);
+    }
+    fclose($out);
+    exit;
+}
+
+// 学生明细选中的学生 id（放在批量导出之后读，避免 uid[] 数组触发 clean() 报错）
+$uid = optional_param('uid', 0, PARAM_INT);
+
+// ========== 导出该生本周 Excel（CSV）/ 导出质性文本 ==========
+if (($export_student_excel || $export_student_txt) && $uid > 0 && $aireader) {
+    $user_obj = $DB->get_record('user', ['id' => $uid], 'id, username, firstname, lastname');
+    if ($user_obj && !has_capability('moodle/course:manageactivities', $context, $user_obj)) {
+        $instance_id = $aireader->id;
+            $week_start = 0;
+            $week_end = 999999999;
+            if ($detail_week !== '' && $detail_week !== 'all') {
+                $t = strtotime($detail_week . ' 00:00:00');
+                if ($t) { $week_start = $t; $week_end = $t + 7 * 86400 - 1; }
+            }
+            if ($export_student_excel) {
+                header('Content-Type: text/csv; charset=UTF-8');
+                header('Content-Disposition: attachment; filename="' . ($user_obj->username ?: 'student') . '_week_' . ($detail_week ?: 'all') . '.csv"');
+                echo "\xEF\xBB\xBF";
+                $out = fopen('php://output', 'w');
+                fputcsv($out, ['类型', '序号', '角色/SKI', '内容', '时间']);
+                $chat_cols_export = ['id'];
+                if ($DB->get_manager()->field_exists('aireader2_chat_log', 'sender_type')) $chat_cols_export[] = 'sender_type';
+                if ($DB->get_manager()->field_exists('aireader2_chat_log', 'role')) $chat_cols_export[] = 'role';
+                if ($DB->get_manager()->field_exists('aireader2_chat_log', 'agent_name')) $chat_cols_export[] = 'agent_name';
+                $chat_cols_export[] = $DB->get_manager()->field_exists('aireader2_chat_log', 'content') ? 'content' : 'user_message, ai_response';
+                $chat_cols_export[] = 'timecreated';
+                $chat_sel_export = implode(', ', $chat_cols_export);
+                $chats = $DB->get_records_sql("SELECT $chat_sel_export FROM {aireader2_chat_log} WHERE aireader2id = ? AND userid = ? ORDER BY timecreated", [$instance_id, $uid]);
+                foreach ($chats as $i => $row) {
+                    if ($detail_week !== '' && $detail_week !== 'all' && ($row->timecreated < $week_start || $row->timecreated > $week_end)) continue;
+                    $role = (isset($row->role) && $row->role === 'user') || (isset($row->sender_type) && $row->sender_type === 'user') ? '学生' : (isset($row->agent_name) ? $row->agent_name : 'AI');
+                    $content = isset($row->content) ? $row->content : (isset($row->user_message) ? $row->user_message : '') . (isset($row->ai_response) ? "\n" . $row->ai_response : '');
+                    fputcsv($out, ['对话', $i + 1, $role, $content, userdate($row->timecreated, '%Y-%m-%d %H:%M:%S')]);
+                }
+                $anns = $DB->get_records_sql("SELECT id, page_num, quote AS ann_quote, created_at FROM {aireader2_annotations} WHERE aireader2id = ? AND userid = ? ORDER BY page_num, created_at", [$instance_id, $uid]);
+                foreach ($anns as $i => $row) {
+                    if ($detail_week !== '' && $detail_week !== 'all' && ($row->created_at < $week_start || $row->created_at > $week_end)) continue;
+                    $quote = isset($row->ann_quote) ? $row->ann_quote : (isset($row->quote) ? $row->quote : '');
+                    fputcsv($out, ['笔记', $i + 1, 'P' . $row->page_num, $quote, userdate($row->created_at, '%Y-%m-%d %H:%M:%S')]);
+                }
+                fclose($out);
+                exit;
+            }
+            if ($export_student_txt) {
+                header('Content-Type: text/plain; charset=UTF-8');
+                header('Content-Disposition: attachment; filename="' . ($user_obj->username ?: 'student') . '_qualitative_' . ($detail_week ?: 'all') . '.txt"');
+                $lines = [];
+                $chat_cols_txt = [];
+                if ($DB->get_manager()->field_exists('aireader2_chat_log', 'sender_type')) $chat_cols_txt[] = 'sender_type';
+                if ($DB->get_manager()->field_exists('aireader2_chat_log', 'role')) $chat_cols_txt[] = 'role';
+                if ($DB->get_manager()->field_exists('aireader2_chat_log', 'agent_name')) $chat_cols_txt[] = 'agent_name';
+                $chat_cols_txt[] = $DB->get_manager()->field_exists('aireader2_chat_log', 'content') ? 'content' : 'user_message, ai_response';
+                $chat_cols_txt[] = 'timecreated';
+                $chat_sel_txt = implode(', ', $chat_cols_txt);
+                $chats = $DB->get_records_sql("SELECT $chat_sel_txt FROM {aireader2_chat_log} WHERE aireader2id = ? AND userid = ? ORDER BY timecreated", [$instance_id, $uid]);
+                foreach ($chats as $row) {
+                    if ($detail_week !== '' && $detail_week !== 'all' && ($row->timecreated < $week_start || $row->timecreated > $week_end)) continue;
+                    $role = (isset($row->role) && $row->role === 'user') || (isset($row->sender_type) && $row->sender_type === 'user') ? '学生' : (isset($row->agent_name) ? $row->agent_name : 'AI');
+                    $content = isset($row->content) ? $row->content : (isset($row->user_message) ? $row->user_message : '') . (isset($row->ai_response) ? "\n" . $row->ai_response : '');
+                    $lines[] = '[' . userdate($row->timecreated, '%Y-%m-%d %H:%M:%S') . '] ' . $role . ': ' . $content;
+                }
+                $anns = $DB->get_records_sql("SELECT page_num, quote AS ann_quote, created_at FROM {aireader2_annotations} WHERE aireader2id = ? AND userid = ? ORDER BY page_num, created_at", [$instance_id, $uid]);
+                foreach ($anns as $row) {
+                    if ($detail_week !== '' && $detail_week !== 'all' && ($row->created_at < $week_start || $row->created_at > $week_end)) continue;
+                    $quote = isset($row->ann_quote) ? $row->ann_quote : (isset($row->quote) ? $row->quote : '');
+                    $lines[] = '[' . userdate($row->created_at, '%Y-%m-%d %H:%M:%S') . '] 笔记 P' . $row->page_num . ': ' . $quote;
+                }
+                echo implode("\n", $lines);
+                exit;
+            }
+    }
 }
 
 $PUBLIC_DASHBOARD_URL = 'http://49.232.13.148:3000/public/dashboard/a0a4df3d-c515-41c9-853a-6aa989751419';
@@ -173,9 +300,13 @@ $detail_annotations_list = [];
 $detail_chat_agents = [];
 $detail_user_questions = [];
 $detail_wordcloud_json = '[]';
+$detail_dialogue_log = [];
+$detail_annotations_for_table = [];
+$detail_weeks_options = ['' => '全部', 'all' => '全部'];
 $students_for_list = [];
+$progress_table_rows = []; // 按 (学生, 任务) 一行，用于看板表格
 
-if ($tab === 'detail' && $aireader) {
+if ($tab === 'detail' && !empty($aireader2_cms)) {
     $course_context = context_course::instance($courseid);
     $params = ['contextid' => $course_context->id];
     $sql_users = "SELECT u.* FROM {user} u
@@ -184,23 +315,72 @@ if ($tab === 'detail' && $aireader) {
         WHERE ctx.id = :contextid
         ORDER BY u.lastname, u.firstname";
     $all_students = $DB->get_records_sql($sql_users, $params);
-    $instance_id = $aireader->id;
+    $instance_id = $aireader ? $aireader->id : null;
 
-    foreach ($all_students as $u) {
-        if (has_capability('moodle/course:manageactivities', $context, $u)) continue;
-        $read_sec = 0;
-        if ($DB->get_manager()->table_exists('aireader2_progress')) {
-            $prog = $DB->get_record('aireader2_progress', ['aireader2id' => $instance_id, 'userid' => $u->id], 'total_read_seconds');
-            if ($prog) $read_sec = (int)$prog->total_read_seconds;
+    // 构建「学生阅读进度」表格数据：每个 (学生, 任务) 一行，便于按任务区分
+    foreach ($aireader2_cms as $cid => $c) {
+        $aid = $c->instance;
+        $ar = $DB->get_record('aireader2', ['id' => $aid], 'id, name, structure');
+        $total_pages_act = 0;
+        if ($ar && !empty($ar->structure)) {
+            $struct = json_decode($ar->structure, true);
+            if (is_array($struct)) {
+                foreach ($struct as $item) {
+                    if (isset($item['page']) && (int)$item['page'] > $total_pages_act) $total_pages_act = (int)$item['page'];
+                }
+            }
         }
-        $ann_count = $DB->count_records('aireader2_annotations', ['aireader2id' => $instance_id, 'userid' => $u->id]);
-        $chat_count = $DB->count_records('aireader2_chat_log', ['aireader2id' => $instance_id, 'userid' => $u->id]);
-        $students_for_list[] = (object)[
-            'user' => $u,
-            'read_minutes' => floor($read_sec / 60),
-            'ann_count' => $ann_count,
-            'chat_count' => $chat_count,
-        ];
+        foreach ($all_students as $u) {
+            if (has_capability('moodle/course:manageactivities', $context, $u)) continue;
+            $read_sec = 0;
+            $last_page = 1;
+            if ($DB->get_manager()->table_exists('aireader2_progress')) {
+                $prog = $DB->get_record('aireader2_progress', ['aireader2id' => $aid, 'userid' => $u->id], 'total_read_seconds, last_page');
+                if ($prog) {
+                    $read_sec = (int)$prog->total_read_seconds;
+                    $last_page = isset($prog->last_page) ? (int)$prog->last_page : 1;
+                }
+            }
+            $ann_count = $DB->count_records('aireader2_annotations', ['aireader2id' => $aid, 'userid' => $u->id]);
+            $chat_count = $DB->count_records('aireader2_chat_log', ['aireader2id' => $aid, 'userid' => $u->id]);
+            $progress_table_rows[] = (object)[
+                'user' => $u,
+                'cm_id' => $cid,
+                'cm_name' => $c->name,
+                'read_minutes' => (int)floor($read_sec / 60),
+                'last_page' => $last_page,
+                'total_pages' => $total_pages_act,
+                'ann_count' => $ann_count,
+                'chat_count' => $chat_count,
+            ];
+        }
+    }
+
+    // 左侧列表仍按「当前活动」：只显示当前 id 下的学生
+    if ($aireader && $instance_id) {
+        $total_pages_here = isset($detail_total_pages) ? (int)$detail_total_pages : 0;
+        foreach ($all_students as $u) {
+            if (has_capability('moodle/course:manageactivities', $context, $u)) continue;
+            $read_sec = 0;
+            $last_page = 1;
+            if ($DB->get_manager()->table_exists('aireader2_progress')) {
+                $prog = $DB->get_record('aireader2_progress', ['aireader2id' => $instance_id, 'userid' => $u->id], 'total_read_seconds, last_page');
+                if ($prog) {
+                    $read_sec = (int)$prog->total_read_seconds;
+                    $last_page = isset($prog->last_page) ? (int)$prog->last_page : 1;
+                }
+            }
+            $ann_count = $DB->count_records('aireader2_annotations', ['aireader2id' => $instance_id, 'userid' => $u->id]);
+            $chat_count = $DB->count_records('aireader2_chat_log', ['aireader2id' => $instance_id, 'userid' => $u->id]);
+            $students_for_list[] = (object)[
+                'user' => $u,
+                'read_minutes' => (int)floor($read_sec / 60),
+                'ann_count' => $ann_count,
+                'chat_count' => $chat_count,
+                'last_page' => $last_page,
+                'total_pages' => $total_pages_here,
+            ];
+        }
     }
 
     if ($uid > 0) {
@@ -307,12 +487,84 @@ if ($tab === 'detail' && $aireader) {
                 return ['text' => $word, 'weight' => $count];
             }, array_keys($freq), array_values($freq)), 0, 50);
             $detail_wordcloud_json = json_encode($wordcloud_arr, JSON_UNESCAPED_UNICODE);
+            // 实验交互详情复盘：多智能体对话记录 + 阅读笔记与高亮（支持按周筛选）
+            $detail_dialogue_log = [];
+            $detail_annotations_for_table = [];
+            $detail_weeks_options = ['' => '全部', 'all' => '全部'];
+            try {
+                $chat_tbl = 'aireader2_chat_log';
+                $dbman = $DB->get_manager();
+                $chat_cols = ['id'];
+                if ($dbman->field_exists($chat_tbl, 'sender_type')) { $chat_cols[] = 'sender_type'; }
+                if ($dbman->field_exists($chat_tbl, 'role')) { $chat_cols[] = 'role'; }
+                if ($dbman->field_exists($chat_tbl, 'agent_name')) { $chat_cols[] = 'agent_name'; }
+                if ($dbman->field_exists($chat_tbl, 'content')) {
+                    $chat_cols[] = 'content';
+                } elseif ($dbman->field_exists($chat_tbl, 'user_message') && $dbman->field_exists($chat_tbl, 'ai_response')) {
+                    $chat_cols[] = 'user_message';
+                    $chat_cols[] = 'ai_response';
+                }
+                $chat_cols[] = 'timecreated';
+                $chat_sel = implode(', ', $chat_cols);
+                $all_chat = $DB->get_records_sql(
+                    "SELECT $chat_sel FROM {aireader2_chat_log} WHERE aireader2id = ? AND userid = ? ORDER BY timecreated ASC",
+                    [$instance_id, $uid]
+                );
+                // 旧表只有 user_message/ai_response 时，拆成两条展示（先用户后 AI）
+                if (!empty($all_chat) && !$dbman->field_exists($chat_tbl, 'content') && $dbman->field_exists($chat_tbl, 'user_message')) {
+                    $expanded = [];
+                    foreach ($all_chat as $r) {
+                        if (!empty($r->user_message)) {
+                            $expanded[] = (object)['id' => $r->id, 'role' => 'user', 'sender_type' => 'user', 'agent_name' => '', 'content' => $r->user_message, 'timecreated' => $r->timecreated];
+                        }
+                        if (!empty($r->ai_response)) {
+                            $expanded[] = (object)['id' => $r->id, 'role' => 'ai', 'sender_type' => 'ai', 'agent_name' => isset($r->agent_name) ? $r->agent_name : '', 'content' => $r->ai_response, 'timecreated' => $r->timecreated];
+                        }
+                    }
+                    $all_chat = $expanded;
+                }
+                $all_ann = $DB->get_records_sql(
+                    "SELECT id, page_num, type, quote AS ann_quote, created_at FROM {aireader2_annotations} WHERE aireader2id = ? AND userid = ? ORDER BY page_num, created_at",
+                    [$instance_id, $uid]
+                );
+                $min_ts = null;
+                $max_ts = null;
+                foreach ($all_chat as $r) { if ($min_ts === null || $r->timecreated < $min_ts) $min_ts = $r->timecreated; if ($max_ts === null || $r->timecreated > $max_ts) $max_ts = $r->timecreated; }
+                foreach ($all_ann as $r) { if ($min_ts === null || $r->created_at < $min_ts) $min_ts = $r->created_at; if ($max_ts === null || $r->created_at > $max_ts) $max_ts = $r->created_at; }
+                if ($min_ts !== null && $max_ts !== null) {
+                    for ($t = $min_ts; $t <= $max_ts; $t += 604800) {
+                        $key = date('Y-m-d', $t);
+                        $end = $t + 604800 - 1;
+                        $detail_weeks_options[$key] = date('n/j', $t) . ' - ' . date('n/j', min($end, $max_ts));
+                    }
+                }
+                $week_start = null;
+                $week_end = null;
+                if ($detail_week !== '' && $detail_week !== 'all') {
+                    $t = strtotime($detail_week . ' 00:00:00');
+                    if ($t) { $week_start = $t; $week_end = $t + 7 * 86400 - 1; }
+                }
+                foreach ($all_chat as $row) {
+                    if ($week_start !== null && ($row->timecreated < $week_start || $row->timecreated > $week_end)) continue;
+                    $detail_dialogue_log[] = $row;
+                }
+                foreach ($all_ann as $row) {
+                    if ($week_start !== null && ($row->created_at < $week_start || $row->created_at > $week_end)) continue;
+                    $detail_annotations_for_table[] = $row;
+                }
+            } catch (Exception $e) {
+                $detail_dialogue_log = [];
+                $detail_annotations_for_table = [];
+            }
         } catch (Exception $e) {
             $detail_annotations_list = [];
             $detail_chat_agents = [];
             $detail_chat_by_agent = [];
             $detail_user_questions = [];
             $detail_wordcloud_json = '[]';
+            $detail_dialogue_log = [];
+            $detail_annotations_for_table = [];
+            $detail_weeks_options = ['' => '全部', 'all' => '全部'];
         }
     }
 }
@@ -589,6 +841,55 @@ body.pagelayout-embedded #page-content { padding: 0; }
 .detail-main .detail-table th { background: #f1f5f9; color: #475569; font-weight: 600; }
 .detail-main .detail-table tr:hover td { background: #f8fafc; }
 .wordcloud-wrap { width: 100%; height: 220px; display: flex; align-items: center; justify-content: center; background: #fff; border-radius: 12px; border: 1px solid #e2e8f0; padding: 16px; }
+/* 学生阅读进度实时看板 */
+.progress-dashboard-wrap { background: #fff; border-radius: 16px; padding: 24px; margin-bottom: 24px; box-shadow: 0 4px 20px rgba(0,82,217,0.08); border: 1px solid rgba(0,82,217,0.08); }
+.progress-dashboard-title { margin: 0 0 8px 0; font-size: 17px; font-weight: 700; color: #1a1a1a; display: flex; align-items: center; gap: 10px; }
+.progress-dashboard-desc { margin: 0 0 16px 0; font-size: 13px; color: #64748b; line-height: 1.5; }
+.progress-toolbar { margin-bottom: 16px; }
+.progress-toolbar-inner { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.progress-toolbar-label { font-size: 14px; color: #475569; white-space: nowrap; }
+.progress-select-activity { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; min-width: 180px; }
+.progress-search-input { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; width: 180px; }
+.progress-search-btn { padding: 8px 16px; background: linear-gradient(135deg, #1565c0, #1976d2); color: #fff; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
+.progress-search-btn:hover { opacity: 0.95; }
+.progress-table .col-check { width: 44px; text-align: center; }
+.progress-table .progress-pages { color: #1565c0; font-weight: 600; }
+.progress-table tr.active-row { background: #e3f2fd; }
+.btn-detail-link { color: #1565c0; font-weight: 600; text-decoration: none; }
+.btn-detail-link:hover { text-decoration: underline; }
+.progress-export-actions { margin-top: 16px; }
+.btn-batch-export { background: linear-gradient(135deg, #00a870, #059669); color: #fff; border: none; padding: 12px 24px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+.btn-batch-export:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,168,112,0.4); }
+.btn-batch-export:disabled { opacity: 0.5; cursor: not-allowed; }
+/* 实验交互详情复盘 */
+.review-section { margin-top: 28px; padding: 24px; background: #f8fafc; border-radius: 16px; border: 1px solid #e2e8f0; }
+.review-section h4 { margin: 0 0 16px 0; font-size: 16px; font-weight: 700; color: #1a1a1a; display: flex; align-items: center; gap: 10px; }
+.review-section h4 i.fa-comments { color: #7c3aed; }
+.review-section h4 i.fa-highlighter { color: #e37318; }
+.review-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-bottom: 20px; }
+.review-filters label { font-size: 14px; color: #475569; }
+.review-filters select { padding: 8px 12px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px; }
+.review-export-btns { display: flex; gap: 12px; flex-wrap: wrap; }
+.review-export-btns a { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 10px; font-size: 14px; font-weight: 600; text-decoration: none; transition: transform 0.2s; }
+.review-export-btns .btn-export-excel { background: linear-gradient(135deg, #00a870, #059669); color: #fff; }
+.review-export-btns .btn-export-txt { background: linear-gradient(135deg, #0ea5e9, #0284c7); color: #fff; }
+.review-export-btns a:hover { transform: translateY(-1px); }
+.review-table { width: 100%; border-collapse: collapse; font-size: 14px; background: #fff; border-radius: 12px; overflow: hidden; margin-top: 12px; }
+.review-table th, .review-table td { padding: 12px 14px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+.review-table th { background: #f1f5f9; color: #475569; font-weight: 600; }
+.review-table .cell-content { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 对话冒泡 */
+.chat-bubbles-wrap { max-height: 400px; overflow-y: auto; padding: 12px 0; }
+.chat-bubble { margin-bottom: 14px; max-width: 85%; clear: both; }
+.chat-bubble-user { float: left; text-align: left; }
+.chat-bubble-ai { float: right; text-align: right; }
+.chat-bubble-user .chat-bubble-content { background: #e3f2fd; color: #1565c0; border-radius: 14px 14px 14px 4px; padding: 10px 14px; display: inline-block; text-align: left; }
+.chat-bubble-ai .chat-bubble-content { background: #f3e8ff; color: #5b21b6; border-radius: 14px 14px 4px 14px; padding: 10px 14px; display: inline-block; text-align: left; }
+.chat-bubble-label { font-size: 11px; color: #64748b; margin-bottom: 4px; }
+.chat-bubble-ai .chat-bubble-label { text-align: right; }
+.chat-bubble-time { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+.chat-bubble-ai .chat-bubble-time { text-align: right; }
+.chat-bubbles-wrap::after { content: ''; display: table; clear: both; }
 </style>
 
 <div class="dashboard-fullscreen">
@@ -714,6 +1015,84 @@ body.pagelayout-embedded #page-content { padding: 0; }
 <?php if (!$aireader) { ?>
 <div class="alert alert-info">请先在课程中添加「学术论文AI伴读」活动，再查看学生明细。</div>
 <?php } else { ?>
+<!-- 学生阅读进度实时看板：按任务区分 + 任务筛选 + 搜索 -->
+<div class="progress-dashboard-wrap">
+    <h3 class="progress-dashboard-title"><i class="fa-solid fa-table-list"></i> 学生阅读进度实时看板</h3>
+    <p class="progress-dashboard-desc">下表按「任务/活动」区分每位学生在不同任务下的阅读与交互数据；可先选择任务、搜索学生，再点击「查看详情」跳转到右侧学情详情。</p>
+    <!-- 筛选栏：选择任务 + 搜索 -->
+    <form method="get" class="progress-toolbar">
+        <input type="hidden" name="courseid" value="<?php echo $courseid; ?>">
+        <input type="hidden" name="tab" value="detail">
+        <div class="progress-toolbar-inner">
+            <label class="progress-toolbar-label">选择任务/活动：</label>
+            <select name="id" onchange="this.form.submit()" class="progress-select-activity">
+                <?php foreach ($aireader2_cms as $cid => $c) {
+                    $sel = ($id == $cid) ? ' selected' : '';
+                    echo '<option value="'.(int)$cid.'"'.$sel.'>'.s($c->name).'</option>';
+                } ?>
+            </select>
+            <label class="progress-toolbar-label">搜索学号/姓名：</label>
+            <input type="text" name="search" value="<?php echo s($search); ?>" placeholder="输入学号或姓名" class="progress-search-input">
+            <button type="submit" class="progress-search-btn"><i class="fa-solid fa-magnifying-glass"></i> 搜索</button>
+        </div>
+    </form>
+    <form id="form-batch-export" method="get" action="<?php echo $CFG->wwwroot; ?>/mod/aireader2/dashboard.php" target="_blank">
+        <input type="hidden" name="courseid" value="<?php echo $courseid; ?>">
+        <input type="hidden" name="id" value="<?php echo $id; ?>">
+        <input type="hidden" name="tab" value="detail">
+        <input type="hidden" name="export_batch" value="1">
+        <div class="tc-table-wrap">
+            <table class="tc-table progress-table">
+                <thead>
+                    <tr>
+                        <th class="col-check"><input type="checkbox" id="progress-select-all" title="全选"></th>
+                        <th>学号</th>
+                        <th>姓名</th>
+                        <th>任务/活动</th>
+                        <th>阅读时长</th>
+                        <th>进度(页/总)</th>
+                        <th>交互轮数</th>
+                        <th>笔记总数</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php
+                $progress_rows_shown = 0;
+                foreach ($progress_table_rows as $s) {
+                    if ((int)$s->cm_id !== (int)$id) continue; // 只显示当前选中任务下的行
+                    $u = $s->user;
+                    if ($search !== '' && stripos(fullname($u), $search) === false && stripos($u->username, $search) === false) continue;
+                    $progress_str = $s->total_pages > 0 ? (int)$s->last_page . ' / ' . (int)$s->total_pages : (int)$s->last_page . ' / —';
+                    $detail_url = new moodle_url('/mod/aireader2/dashboard.php', ['courseid' => $courseid, 'id' => $s->cm_id, 'tab' => 'detail', 'uid' => $u->id]);
+                    if ($search !== '') $detail_url->param('search', $search);
+                    $detail_url_str = $detail_url->out(false) . '#detail-right';
+                    $progress_rows_shown++;
+                ?>
+                    <tr class="<?php echo ($uid == $u->id && (int)$id == (int)$s->cm_id) ? ' active-row' : ''; ?>">
+                        <td class="col-check"><input type="checkbox" name="uid[]" value="<?php echo (int)$u->id; ?>" class="progress-row-cb"></td>
+                        <td><?php echo s($u->username); ?></td>
+                        <td><?php echo s(fullname($u)); ?></td>
+                        <td><?php echo s($s->cm_name); ?></td>
+                        <td><?php echo (int)$s->read_minutes; ?>min</td>
+                        <td class="progress-pages"><?php echo $progress_str; ?></td>
+                        <td><?php echo (int)$s->chat_count; ?>轮</td>
+                        <td><?php echo (int)$s->ann_count; ?>条</td>
+                        <td><a href="<?php echo $detail_url_str; ?>" class="btn-detail-link">查看详情</a></td>
+                    </tr>
+                <?php } ?>
+                <?php if ($progress_rows_shown === 0) { ?>
+                    <tr><td colspan="9" style="text-align:center; color:#8a939d;">暂无数据（请选择任务或调整搜索）</td></tr>
+                <?php } ?>
+                </tbody>
+            </table>
+        </div>
+        <div class="progress-export-actions">
+            <button type="submit" id="btn-batch-export" class="btn-batch-export" disabled>批量导出已选同学数据</button>
+        </div>
+    </form>
+</div>
+
 <div class="detail-layout">
     <div class="detail-left">
         <div class="detail-left-title"><i class="fa-solid fa-user-graduate"></i> 按学生查看学情</div>
@@ -766,7 +1145,7 @@ body.pagelayout-embedded #page-content { padding: 0; }
             <?php } ?>
         </ul>
     </div>
-    <div class="detail-right">
+    <div class="detail-right" id="detail-right">
         <?php if (!$detail_user) { ?>
         <div class="detail-placeholder">
             <div class="icon-wrap"><i class="fa-solid fa-user-plus"></i></div>
@@ -830,60 +1209,120 @@ body.pagelayout-embedded #page-content { padding: 0; }
 
             <div class="detail-block">
                 <h4><i class="fa-solid fa-chart-pie"></i> 与各智能体交互分布</h4>
-                <?php if (!empty($detail_chat_by_agent)) { ?>
-                <ul class="detail-list">
-                    <?php foreach ($detail_chat_by_agent as $agent => $cnt) { ?>
-                    <li><?php echo s($agent); ?> <?php echo (int)$cnt; ?>条</li>
-                    <?php } ?>
-                </ul>
-                <p style="font-size:12px; color:#999;">有进度记录的天数: <?php echo (int)$detail_access_days; ?>天(近似反映使用频率)</p>
+                <?php if (!empty($detail_chat_by_agent)) {
+                    $detail_agent_chart_json = json_encode(array_values(array_map(function($k, $v) { return ['label' => $k, 'value' => $v]; }, array_keys($detail_chat_by_agent), array_values($detail_chat_by_agent))), JSON_UNESCAPED_UNICODE);
+                ?>
+                <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+                <div class="chart-wrap" style="height:220px; position:relative;"><canvas id="chart-detail-agent"></canvas></div>
+                <p style="font-size:12px; color:#999; margin-top:8px;">有进度记录的天数: <?php echo (int)$detail_access_days; ?>天(近似反映使用频率)</p>
+                <script>
+                (function(){
+                    var data = <?php echo $detail_agent_chart_json; ?>;
+                    if (data.length && document.getElementById('chart-detail-agent')) {
+                        if (typeof Chart !== 'undefined') {
+                            new Chart(document.getElementById('chart-detail-agent'), {
+                                type: 'doughnut',
+                                data: { labels: data.map(function(d){ return d.label; }), datasets: [{ data: data.map(function(d){ return d.value; }), backgroundColor: ['#0052D9','#00a870','#e37318','#7c3aed','#0ea5e9','#f59e0b'], borderWidth: 0 }] },
+                                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
+                            });
+                        }
+                    }
+                })();
+                </script>
                 <?php } else { ?>
                 <p style="color:#999;">暂无AI对话记录</p>
                 <?php } ?>
             </div>
 
-            <div class="detail-block">
-                <h4><i class="fa-solid fa-robot"></i> 与哪些智能体聊了</h4>
-                <?php if (!empty($detail_chat_agents)) { ?>
-                <ul class="detail-list">
-                    <?php foreach ($detail_chat_agents as $agent) { ?>
-                    <li><?php echo s($agent); ?></li>
-                    <?php } ?>
-                </ul>
-                <?php } else { ?>
-                <p style="color:#999;">暂无AI对话记录</p>
-                <?php } ?>
-            </div>
+            <!-- 实验交互详情复盘 -->
+            <div class="detail-block review-section">
+                <h4><i class="fa-solid fa-filter"></i> 筛选与导出</h4>
+                <div class="review-filters">
+                    <label>筛选周次：</label>
+                    <form method="get" style="display:inline-flex; align-items:center; gap:10px;" id="form-review-week">
+                        <input type="hidden" name="courseid" value="<?php echo $courseid; ?>">
+                        <input type="hidden" name="id" value="<?php echo $id; ?>">
+                        <input type="hidden" name="tab" value="detail">
+                        <input type="hidden" name="uid" value="<?php echo (int)$uid; ?>">
+                        <?php if ($search !== '') { ?><input type="hidden" name="search" value="<?php echo s($search); ?>"><?php } ?>
+                        <select name="detail_week" onchange="this.form.submit()">
+                            <?php foreach ($detail_weeks_options as $wk_val => $wk_label) {
+                                $sel = ($detail_week === $wk_val || ($detail_week === '' && $wk_val === '')) ? ' selected' : '';
+                                echo '<option value="'.s($wk_val).'"'.$sel.'>'.s($wk_label).'</option>';
+                            } ?>
+                        </select>
+                    </form>
+                    <span class="text-muted" style="font-size:12px; color:#64748b;">(切换周次查看该生不同阶段数据)</span>
+                </div>
+                <div class="review-export-btns">
+                    <a href="<?php echo $CFG->wwwroot; ?>/mod/aireader2/dashboard.php?courseid=<?php echo $courseid; ?>&id=<?php echo $id; ?>&tab=detail&uid=<?php echo $uid; ?>&export_student_excel=1&detail_week=<?php echo urlencode($detail_week); ?>" class="btn-export-excel" target="_blank"><i class="fa-solid fa-file-excel"></i> 导出该生本周 Excel</a>
+                    <a href="<?php echo $CFG->wwwroot; ?>/mod/aireader2/dashboard.php?courseid=<?php echo $courseid; ?>&id=<?php echo $id; ?>&tab=detail&uid=<?php echo $uid; ?>&export_student_txt=1&detail_week=<?php echo urlencode($detail_week); ?>" class="btn-export-txt" target="_blank"><i class="fa-solid fa-file-lines"></i> 导出质性文本 (.txt)</a>
+                </div>
 
-            <div class="detail-block">
-                <h4><i class="fa-solid fa-highlighter"></i> 标注内容</h4>
-                <?php if (!empty($detail_annotations_list)) { ?>
-                <ul class="detail-list">
-                    <?php foreach ($detail_annotations_list as $a) {
-                        $quote_raw = isset($a->ann_quote) ? $a->ann_quote : (isset($a->quote) ? $a->quote : '');
-                        $preview = $quote_raw !== '' ? mb_substr(strip_tags($quote_raw), 0, 120) . (mb_strlen(strip_tags($quote_raw)) > 120 ? '…' : '') : '（无文本）';
+                <h4 style="margin-top:24px;"><i class="fa-solid fa-comments"></i> 对话与提问（冒泡形式）</h4>
+                <div class="review-filters" style="margin-bottom:12px;">
+                    <label>筛选智能体：</label>
+                    <select id="filter-dialogue-agent" class="progress-select-activity" style="min-width:160px;">
+                        <option value="">全部</option>
+                        <option value="__user__">学生</option>
+                        <?php foreach (array_keys($detail_chat_by_agent) as $agent) { echo '<option value="'.s($agent).'">'.s($agent).'</option>'; } ?>
+                    </select>
+                </div>
+                <div class="chat-bubbles-wrap" id="chat-bubbles-wrap">
+                    <?php foreach ($detail_dialogue_log as $row) {
+                        $is_user = (isset($row->role) && $row->role === 'user') || (isset($row->sender_type) && $row->sender_type === 'user');
+                        $role_label = $is_user ? '学生' : (isset($row->agent_name) ? $row->agent_name : 'AI');
+                        $data_agent = $is_user ? '__user__' : (isset($row->agent_name) ? $row->agent_name : '');
                     ?>
-                    <li>第<?php echo (int)$a->page_num; ?>页 · <?php echo s($preview); ?></li>
+                    <div class="chat-bubble <?php echo $is_user ? 'chat-bubble-user' : 'chat-bubble-ai'; ?>" data-agent="<?php echo s($data_agent); ?>">
+                        <div class="chat-bubble-label"><?php echo s($role_label); ?></div>
+                        <div class="chat-bubble-content"><?php echo nl2br(s($row->content)); ?></div>
+                        <div class="chat-bubble-time"><?php echo userdate($row->timecreated, '%Y-%m-%d %H:%M'); ?></div>
+                    </div>
                     <?php } ?>
-                </ul>
-                <?php } else { ?>
-                <p style="color:#999;">暂无标注</p>
-                <?php } ?>
-            </div>
+                    <?php if (empty($detail_dialogue_log)) { ?><p class="text-muted" style="text-align:center; padding:24px;">暂无对话记录</p><?php } ?>
+                </div>
 
-            <div class="detail-block">
-                <h4><i class="fa-solid fa-circle-question"></i> 提问列表</h4>
-                <?php if (!empty($detail_user_questions)) { ?>
-                <ul class="detail-list">
-                    <?php foreach ($detail_user_questions as $q) {
-                        $preview = $q->content ? mb_substr($q->content, 0, 100) . (mb_strlen($q->content) > 100 ? '…' : '') : '';
-                    ?>
-                    <li><?php echo s($preview); ?> <span style="color:#999; font-size:12px;"><?php echo userdate($q->timecreated, '%m-%d %H:%M'); ?></span></li>
-                    <?php } ?>
-                </ul>
-                <?php } else { ?>
-                <p style="color:#999;">暂无提问</p>
-                <?php } ?>
+                <h4 style="margin-top:24px;"><i class="fa-solid fa-highlighter"></i> 标注与笔记（合并高亮/划线）</h4>
+                <div class="review-filters" style="margin-bottom:12px;">
+                    <label>类型：</label>
+                    <select id="filter-ann-type" class="progress-select-activity" style="min-width:120px;">
+                        <option value="">全部</option>
+                        <option value="highlight">高亮标注</option>
+                        <option value="ink">划线批注</option>
+                    </select>
+                    <label style="margin-left:12px;">是否有笔记：</label>
+                    <select id="filter-ann-note" class="progress-select-activity" style="min-width:100px;">
+                        <option value="">全部</option>
+                        <option value="1">有</option>
+                        <option value="0">无</option>
+                    </select>
+                </div>
+                <div class="tc-table-wrap">
+                    <table class="review-table" id="annotations-merged-table">
+                        <thead><tr><th>序号</th><th>页码</th><th>类型</th><th>高亮/原文</th><th>笔记</th><th>创建时间</th></tr></thead>
+                        <tbody>
+                        <?php
+                        $ann_merged = !empty($detail_annotations_for_table) ? $detail_annotations_for_table : $detail_annotations_list;
+                        foreach ($ann_merged as $i => $a) {
+                            $quote_raw = isset($a->ann_quote) ? $a->ann_quote : (isset($a->quote) ? $a->quote : '');
+                            $atype = isset($a->type) ? $a->type : 'highlight';
+                            $type_label = ($atype === 'ink') ? '划线批注' : '高亮标注';
+                            $has_note = ($quote_raw !== '' && trim(strip_tags($quote_raw)) !== '') ? '1' : '0';
+                        ?>
+                            <tr data-ann-type="<?php echo s($atype); ?>" data-has-note="<?php echo $has_note; ?>">
+                                <td><?php echo $i + 1; ?></td>
+                                <td>P<?php echo (int)$a->page_num; ?></td>
+                                <td><?php echo s($type_label); ?></td>
+                                <td class="cell-content" title="<?php echo s($quote_raw); ?>"><?php echo s(mb_substr(strip_tags($quote_raw), 0, 80)); ?><?php echo mb_strlen(strip_tags($quote_raw)) > 80 ? '…' : ''; ?></td>
+                                <td><?php echo $quote_raw !== '' ? s(mb_substr(strip_tags($quote_raw), 0, 60)) . (mb_strlen(strip_tags($quote_raw)) > 60 ? '…' : '') : '—'; ?></td>
+                                <td><?php echo userdate($a->created_at, '%Y-%m-%d %H:%M'); ?></td>
+                            </tr>
+                        <?php } ?>
+                        <?php if (empty($ann_merged)) { ?><tr><td colspan="6" style="text-align:center; color:#8a939d;">暂无标注与笔记</td></tr><?php } ?>
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             <div class="detail-block">
@@ -923,6 +1362,80 @@ body.pagelayout-embedded #page-content { padding: 0; }
     </div><!-- tc-body -->
 </div><!-- dashboard-fullscreen -->
 
+<?php if ($tab === 'detail') { ?>
+<script>
+(function(){
+    function runWhenReady(fn) {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', fn);
+        } else {
+            fn();
+        }
+    }
+    runWhenReady(function() {
+        var form = document.getElementById('form-batch-export');
+        var btnExport = document.getElementById('btn-batch-export');
+        if (!form || !btnExport) return;
+        function updateExportBtn() {
+            var cbs = form.querySelectorAll('.progress-row-cb');
+            var any = false;
+            for (var i = 0; i < cbs.length; i++) { if (cbs[i].checked) { any = true; break; } }
+            btnExport.disabled = !any;
+        }
+        form.addEventListener('change', function(e) {
+            if (e.target.id === 'progress-select-all') {
+                var checked = e.target.checked;
+                form.querySelectorAll('.progress-row-cb').forEach(function(cb) { cb.checked = checked; });
+            }
+            if (e.target.id === 'progress-select-all' || e.target.classList.contains('progress-row-cb')) {
+                updateExportBtn();
+            }
+        });
+        updateExportBtn();
+    });
+    // 若 URL 带 uid（点击了「查看详情」），滚动到右侧详情区
+    var m = window.location.search.match(/[?&]uid=(\d+)/);
+    if (m && document.getElementById('detail-right')) {
+        var el = document.getElementById('detail-right');
+        setTimeout(function() { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 100);
+    }
+
+    // 对话冒泡：按智能体筛选
+    var filterAgent = document.getElementById('filter-dialogue-agent');
+    var chatWrap = document.getElementById('chat-bubbles-wrap');
+    if (filterAgent && chatWrap) {
+        filterAgent.addEventListener('change', function() {
+            var val = this.value;
+            var bubbles = chatWrap.querySelectorAll('.chat-bubble');
+            bubbles.forEach(function(el) {
+                var agent = el.getAttribute('data-agent') || '';
+                el.style.display = (val === '' || agent === val) ? '' : 'none';
+            });
+        });
+    }
+    // 标注与笔记：按类型、是否有笔记筛选
+    var filterAnnType = document.getElementById('filter-ann-type');
+    var filterAnnNote = document.getElementById('filter-ann-note');
+    var annTable = document.getElementById('annotations-merged-table');
+    if (annTable) {
+        function filterAnnRows() {
+            var typeVal = filterAnnType ? filterAnnType.value : '';
+            var noteVal = filterAnnNote ? filterAnnNote.value : '';
+            var rows = annTable.querySelectorAll('tbody tr[data-ann-type]');
+            rows.forEach(function(tr) {
+                var t = tr.getAttribute('data-ann-type') || '';
+                var n = tr.getAttribute('data-has-note') || '0';
+                var showType = (typeVal === '' || t === typeVal);
+                var showNote = (noteVal === '' || n === noteVal);
+                tr.style.display = (showType && showNote) ? '' : 'none';
+            });
+        }
+        if (filterAnnType) filterAnnType.addEventListener('change', filterAnnRows);
+        if (filterAnnNote) filterAnnNote.addEventListener('change', filterAnnRows);
+    }
+})();
+</script>
+<?php } ?>
+
 <?php
 echo $OUTPUT->footer();
-PUT->footer();
