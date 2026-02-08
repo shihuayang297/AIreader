@@ -64,9 +64,6 @@ if (!$is_reader_mode) {
         .style-blue .icon-circle { background: #eff6ff; color: #2563eb; }
         .style-green .icon-circle { background: #f0fdf4; color: #16a34a; }
         .style-orange .icon-circle { background: #fff7ed; color: #ea580c; }
-        
-        /* 🔥 新增：配置中心的样式 (深邃蓝/青色) */
-        .style-config .icon-circle { background: #e0f2fe; color: #0284c7; }
     </style>
 
     <div class="portal-container">
@@ -79,28 +76,25 @@ if (!$is_reader_mode) {
         <div class="card-grid">';
 
     if ($is_teacher) {
-        // 🔥🔥🔥 教师端卡片：核心修改区域 🔥🔥🔥
+        // 教师端卡片：导读配置、学情看板、体验伴读
         echo '
-            <a href="'.$CFG->wwwroot.'/mod/aireader2/report.php?id='.$id.'" class="action-card style-config">
+            <a href="'.$CFG->wwwroot.'/mod/aireader2/manage.php?id='.$id.'" class="action-card style-blue">
                 <div class="icon-circle"><i class="fa-solid fa-sliders"></i></div>
                 <div class="card-title">导读配置</div>
-                <div class="card-content" style="text-align:center">可视化编辑论文目录结构 (Structure) 与 AI 智能体触发规则。</div>
+                <div class="card-content" style="text-align:center">可视化配置论文目录结构与 AI 触发规则。</div>
             </a>
-            
             <a href="'.$CFG->wwwroot.'/mod/aireader2/dashboard.php?courseid='.$course->id.'" class="action-card style-green">
                 <div class="icon-circle"><i class="fa-solid fa-chart-line"></i></div>
                 <div class="card-title">学情看板</div>
                 <div class="card-content" style="text-align:center">全景式数据大屏，实时监控班级整体阅读进度。</div>
             </a>
-            
             <a href="'.$PAGE->url->out(false, ['action' => 'write']).'" class="action-card style-orange">
                 <div class="icon-circle"><i class="fa-solid fa-book-reader"></i></div>
                 <div class="card-title">体验伴读</div>
                 <div class="card-content" style="text-align:center">进入学生视景，体验 PDF 阅读与 AI 智能体实时交互。</div>
             </a>';
-        // 🔥🔥🔥 修改结束 🔥🔥🔥
     } else {
-        // 学生端过渡卡片 (保持不变)
+        // 学生端过渡卡片
         echo '
             <div class="action-card style-blue">
                 <div class="icon-circle"><i class="fa-solid fa-users-gear"></i></div>
