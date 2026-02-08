@@ -1,0 +1,42 @@
+nohup: ignoring input
+INFO:     Started server process [3658170]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+🔍 Intent Detected: encyclopedia_term
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_term)
+INFO:     127.0.0.1:35480 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_concept
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_concept)
+INFO:     127.0.0.1:51934 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_trans
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_trans)
+INFO:     127.0.0.1:39276 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_trans
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_trans)
+INFO:     127.0.0.1:51054 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_trans
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_trans)
+INFO:     127.0.0.1:52792 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_trans
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_trans)
+INFO:     127.0.0.1:33258 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_concept
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_concept)
+INFO:     127.0.0.1:58876 - "POST /chat HTTP/1.1" 200 OK
+INFO:     50.7.252.138:34230 - "GET /login.html HTTP/1.1" 404 Not Found
+🤖 Activating Agent: brainstormer (Prompt: brainstormer)
+INFO:     127.0.0.1:56142 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: reviewer (Prompt: reviewer)
+INFO:     127.0.0.1:41880 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: reviewer (Prompt: reviewer)
+INFO:     127.0.0.1:57550 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_trans
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_trans)
+INFO:     127.0.0.1:60990 - "POST /chat HTTP/1.1" 200 OK
+WARNING:  Invalid HTTP request received.
+INFO:     66.132.153.116:19674 - "GET / HTTP/1.1" 404 Not Found
+INFO:     66.132.153.116:19710 - "PRI %2A HTTP/2.0" 404 Not Found
+WARNING:  Invalid HTTP request received.
+WARNING:  Invalid HTTP request received.
+INFO:     66.132.153.116:62044 - "GET /security.txt HTTP/1.1" 404 Not Found

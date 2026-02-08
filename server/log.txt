@@ -1,0 +1,65 @@
+nohup: ignoring input
+INFO:     Started server process [4046363]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+🤖 Activating Agent: idea_engineer (Prompt: idea_engineer)
+INFO:     127.0.0.1:46340 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: idea_engineer (Prompt: idea_engineer)
+INFO:     127.0.0.1:46044 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: idea_engineer (Prompt: idea_engineer)
+INFO:     127.0.0.1:56140 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: reviewer (Prompt: reviewer)
+INFO:     127.0.0.1:52476 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: idea_engineer (Prompt: idea_engineer)
+INFO:     127.0.0.1:55470 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: idea_engineer (Prompt: idea_engineer)
+INFO:     127.0.0.1:48784 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: navigator (Prompt: navigator)
+INFO:     127.0.0.1:42642 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: navigator (Prompt: navigator)
+INFO:     127.0.0.1:36382 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_term
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_term)
+INFO:     127.0.0.1:49820 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_trans
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_trans)
+INFO:     127.0.0.1:55616 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_term
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_term)
+INFO:     127.0.0.1:39968 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_term
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_term)
+INFO:     127.0.0.1:50122 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_term
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_term)
+INFO:     127.0.0.1:51278 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_term
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_term)
+INFO:     127.0.0.1:41920 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_term
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_term)
+INFO:     127.0.0.1:44976 - "POST /chat HTTP/1.1" 200 OK
+🔍 Intent Detected: encyclopedia_concept
+🤖 Activating Agent: encyclopedia (Prompt: encyclopedia_concept)
+INFO:     127.0.0.1:52680 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: navigator (Prompt: navigator)
+INFO:     127.0.0.1:54606 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: idea_engineer (Prompt: idea_engineer)
+INFO:     127.0.0.1:35606 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: idea_engineer (Prompt: idea_engineer)
+INFO:     127.0.0.1:33188 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: idea_engineer (Prompt: idea_engineer)
+INFO:     127.0.0.1:43220 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: reviewer (Prompt: reviewer)
+INFO:     127.0.0.1:39964 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: idea_engineer (Prompt: idea_engineer)
+INFO:     127.0.0.1:49924 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: idea_engineer (Prompt: idea_engineer)
+INFO:     127.0.0.1:48100 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: idea_engineer (Prompt: idea_engineer)
+INFO:     127.0.0.1:48108 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: idea_engineer (Prompt: idea_engineer)
+INFO:     127.0.0.1:37364 - "POST /chat HTTP/1.1" 200 OK
+🤖 Activating Agent: idea_engineer (Prompt: idea_engineer)
+INFO:     127.0.0.1:58216 - "POST /chat HTTP/1.1" 200 OK
