@@ -8,6 +8,7 @@ import { parseOutline } from '@/utils/usePdfOutline.js'
 
 // 🔥 引入拆分后的模块
 import AnnotationPopover from './AnnotationPopover.vue'
+import BubbleMenu from './BubbleMenu.vue'
 import { usePdfData } from '@/composables/usePdfData'
 import { usePdfInteraction } from '@/composables/usePdfInteraction'
 
@@ -26,7 +27,7 @@ const props = defineProps({
   skipOutlineParse: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['loaded', 'create-annotation', 'delete-annotation', 'outline-loaded', 'ai-ask', 'page-change', 'update-annotation'])
+const emit = defineEmits(['loaded', 'create-annotation', 'delete-annotation', 'outline-loaded', 'ai-ask', 'translate-request', 'page-change', 'update-annotation'])
 
 const pdfContainer = ref(null)
 const pdfContentRef = ref(null)
@@ -36,19 +37,27 @@ const pageCount = ref(0)
 const forceUpdateKey = ref(0) // 🔥 这个 key 改变会强制重新渲染高亮层
 let resizeObserver = null
 let mutationObserver = null // 🔥 新增：DOM 变化监听器
+let selectionChangeTimer = null
+const onSelectionChange = () => {
+  if (selectionChangeTimer) clearTimeout(selectionChangeTimer)
+  selectionChangeTimer = setTimeout(checkSelectionForBubble, 80)
+}
 
 // 1. 使用数据处理
 const { parsedAnnotations } = usePdfData(props)
 
-// #region agent log
-watch(parsedAnnotations, (val) => {
-  const len = Array.isArray(val) ? val.length : 0
-  fetch('http://localhost:7245/ingest/a2cd8cc6-3ab9-472d-a750-ad20d0da1930',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'PdfRenderer:parsedAnnotations',message:'parsedAnnotations length',data:{length:len,annotationsPropLength:props.annotations?.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{})
-}, { immediate: true })
-// #endregion
-
 // 2. 使用交互处理
-const { activePopover, handleMouseUp, handleHighlightClick } = usePdfInteraction(props, emit, pdfContentRef, pdfContainer)
+const { activePopover, handleMouseUp, handleHighlightClick, bubbleMenu, hideBubbleMenu, checkSelectionForBubble } = usePdfInteraction(props, emit, pdfContentRef, pdfContainer)
+
+const onBubbleTranslate = (payload) => {
+  hideBubbleMenu()
+  window.getSelection()?.removeAllRanges()
+  emit('translate-request', payload)
+}
+const onBubbleClose = () => {
+  hideBubbleMenu()
+  window.getSelection()?.removeAllRanges()
+}
 
 // 3. 布局与加载
 const updateLayout = () => { 
@@ -95,10 +104,16 @@ onMounted(() => {
       // 启动 DOM 监控
       startDomObserver();
     }
+    document.addEventListener('selectionchange', onSelectionChange)
+    // 在 document 上也监听 mouseup，避免事件未冒泡到 pdfContainer 时漏掉
+    document.addEventListener('mouseup', handleMouseUp)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', updateLayout)
+  document.removeEventListener('selectionchange', onSelectionChange)
+  document.removeEventListener('mouseup', handleMouseUp)
+  if (selectionChangeTimer) clearTimeout(selectionChangeTimer)
   if (resizeObserver) resizeObserver.disconnect()
   if (mutationObserver) mutationObserver.disconnect()
 })
@@ -266,6 +281,14 @@ const manualRefresh = () => {
     </div>
 
     <AnnotationPopover v-model="activePopover" @save="saveNote" @delete="executeDelete" />
+    <BubbleMenu
+      :visible="bubbleMenu.show"
+      :x="bubbleMenu.x"
+      :y="bubbleMenu.y"
+      :selection-text="bubbleMenu.text"
+      @translate="onBubbleTranslate"
+      @close="onBubbleClose"
+    />
   </div>
 </template>
 

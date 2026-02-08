@@ -313,15 +313,24 @@ const handlePdfInteraction = (payload) => {
     updateLastActionTime()
     if (payload.type === 'explain' || payload.type === 'ask') {
         isAiSidebarOpen.value = true
-        let targetAgent = 'noah'
+        let targetAgent = 'encyclopedia'
         let message = ''
-        if (payload.type === 'explain') message = `@noah 请解释：\n\n"${payload.text}"`
-        else if (payload.type === 'ask') { targetAgent = 'sogo'; message = `@sogo 我有疑问：\n\n"${payload.text}"\n\n` }
+        if (payload.type === 'explain') message = `@小科 请解释：\n\n"${payload.text}"`
+        else if (payload.type === 'ask') { targetAgent = 'idea_engineer'; message = `@小脑 我有疑问：\n\n"${payload.text}"\n\n` }
         
         nextTick(() => {
             rightSidebarRef.value?.handleExternalRequest({ type: 'action', agent: targetAgent, prompt: message })
         })
     }
+}
+
+// 浏览模式选中文字后点击“翻译”气泡：交给右侧百科助手
+const handleTranslateRequest = (payload) => {
+    updateLastActionTime()
+    isAiSidebarOpen.value = true
+    nextTick(() => {
+        rightSidebarRef.value?.handleExternalRequest({ type: 'action', agent: payload.agentId || 'encyclopedia', prompt: payload.message })
+    })
 }
 
 const toggleAiSidebar = () => { isAiSidebarOpen.value = !isAiSidebarOpen.value }
@@ -531,6 +540,7 @@ onUnmounted(() => {
                 @delete-annotation="handleDeleteAnnotation"
                 @update-annotation="handleUpdateAnnotation"
                 @text-selected="handlePdfInteraction"
+                @translate-request="handleTranslateRequest"
                 @outline-loaded="handleOutlineLoaded"
                 @page-change="handlePageChange"
             />

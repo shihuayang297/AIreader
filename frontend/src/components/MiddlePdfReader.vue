@@ -24,7 +24,8 @@ const emit = defineEmits([
   'update:activeTool', 
   'create-annotation', 
   'delete-annotation', 
-  'update-annotation'
+  'update-annotation',
+  'translate-request'
 ])
 
 // 2. 本地状态
@@ -89,6 +90,7 @@ const handleZoomOut = () => { if(scale.value > 0.6) scale.value -= 0.1 }
           @update-annotation="handleUpdateNote"
           @outline-loaded="(data) => emit('outline-loaded', data)"
           @ai-ask="(text) => emit('text-selected', { type: 'explain', text })"
+          @translate-request="(payload) => emit('translate-request', payload)"
           @page-change="(page) => emit('page-change', page)" 
         />
     </div>

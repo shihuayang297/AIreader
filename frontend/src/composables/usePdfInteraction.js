@@ -1,11 +1,68 @@
 import { ref } from 'vue'
 
+const BUBBLE_MENU_HEIGHT = 44
+const BUBBLE_MENU_GAP = 8
+
 export function usePdfInteraction(props, emit, pdfContentRef, pdfContainer) {
   
   // 增加 placement 属性，用于控制弹窗在上方还是下方
   const activePopover = ref({ 
     show: false, x: 0, y: 0, id: null, note: '', isEditing: false, placement: 'top' 
   })
+
+  // 浏览模式：选中文字后的“翻译”气泡菜单
+  const bubbleMenu = ref({ show: false, x: 0, y: 0, text: '' })
+  let pendingHideTimer = null
+  const hideBubbleMenu = () => {
+    if (pendingHideTimer) clearTimeout(pendingHideTimer)
+    pendingHideTimer = null
+    bubbleMenu.value = { show: false, x: 0, y: 0, text: '' }
+  }
+  const scheduleHideBubbleMenu = () => {
+    if (pendingHideTimer) return
+    pendingHideTimer = setTimeout(() => {
+      pendingHideTimer = null
+      bubbleMenu.value = { show: false, x: 0, y: 0, text: '' }
+    }, 180)
+  }
+
+  const checkSelectionForBubble = () => {
+    const sel = window.getSelection()
+    const tRaw = (sel && sel.toString()) ? sel.toString().trim() : ''
+    if (props.activeTool !== 'cursor') return
+    const t = tRaw
+    if (!t || !sel || sel.rangeCount === 0) {
+      scheduleHideBubbleMenu()
+      return
+    }
+    if (pendingHideTimer) {
+      clearTimeout(pendingHideTimer)
+      pendingHideTimer = null
+    }
+    try {
+      const r = sel.getRangeAt(0)
+      if (r.collapsed) {
+        scheduleHideBubbleMenu()
+        return
+      }
+      let rect = r.getBoundingClientRect()
+      const clientRects = r.getClientRects()
+      if ((!rect.width && !rect.height) && clientRects.length > 0) {
+        rect = clientRects[0]
+      }
+      const centerX = rect.left + rect.width / 2
+      let y = rect.top - BUBBLE_MENU_HEIGHT - BUBBLE_MENU_GAP
+      if (y < BUBBLE_MENU_GAP) y = rect.bottom + BUBBLE_MENU_GAP
+      bubbleMenu.value = {
+        show: true,
+        x: centerX,
+        y: Math.max(BUBBLE_MENU_GAP, y),
+        text: t
+      }
+    } catch (e) {
+      bubbleMenu.value = { show: false, x: 0, y: 0, text: '' }
+    }
+  }
 
   // --- 处理划词 (创建) ---
   const handleMouseUp = () => {
@@ -21,7 +78,13 @@ export function usePdfInteraction(props, emit, pdfContentRef, pdfContainer) {
 
     const selection = window.getSelection()
     const text = selection.toString().trim()
-    if (!text || props.activeTool === 'cursor') return
+
+    if (props.activeTool === 'cursor') {
+      setTimeout(checkSelectionForBubble, 0)
+      return
+    }
+
+    if (!text) return
     
     const range = selection.getRangeAt(0)
     const rects = Array.from(range.getClientRects())
@@ -122,6 +185,9 @@ export function usePdfInteraction(props, emit, pdfContentRef, pdfContainer) {
   return {
     activePopover,
     handleMouseUp,
-    handleHighlightClick
+    handleHighlightClick,
+    bubbleMenu,
+    hideBubbleMenu,
+    checkSelectionForBubble
   }
 }
